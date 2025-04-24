@@ -325,7 +325,7 @@ class AutoHekiliGUI(QMainWindow):
         self.current_spell = None
         
         # Set dark theme
-        self.set_wow_theme()
+        self.set_dark_theme()
         
         # Set up the UI
         self.init_ui()
@@ -365,130 +365,90 @@ class AutoHekiliGUI(QMainWindow):
         
         # Status bar
         self.statusBar().showMessage("Ready")
-    
-    def init_setup_tab(self):
-        """Initialize the setup tab."""
-        layout = QVBoxLayout(self.setup_tab)
-        
-        # Introduction
-        intro_box = QGroupBox("Welcome to AUTO_Hekili")
-        intro_layout = QVBoxLayout()
-        intro_text = QLabel(
-            "This application will automate spell casting based on Hekili addon recommendations.\n\n"
-            "WARNING: Using automation tools may violate World of Warcraft's Terms of Service.\n"
-            "Use at your own risk!"
-        )
-        intro_text.setWordWrap(True)
-        intro_layout.addWidget(intro_text)
-        intro_box.setLayout(intro_layout)
-        layout.addWidget(intro_box)
-        
-        # Class and spec selection
-        class_box = QGroupBox("Class & Specialization")
-        class_layout = QFormLayout()
-        
-        self.class_combo = QComboBox()
-        self.class_combo.addItems(self.get_available_classes_specs())
-        if "Class" in self.config and self.config["Class"]:
-            idx = self.class_combo.findText(self.config["Class"])
-            if idx >= 0:
-                self.class_combo.setCurrentIndex(idx)
-        
-        class_layout.addRow("Select Class/Spec:", self.class_combo)
-        class_box.setLayout(class_layout)
-        layout.addWidget(class_box)
-        
-        # Screen region selection
-        region_box = QGroupBox("Hekili Spellbox Region")
-        region_layout = QFormLayout()
-        
-        region_btn_layout = QHBoxLayout()
-        self.region_label = QLabel("Not selected")
-        self.select_region_btn = QPushButton("Select Region")
-        self.select_region_btn.clicked.connect(self.select_region)
-        region_btn_layout.addWidget(self.region_label)
-        region_btn_layout.addWidget(self.select_region_btn)
-        
-        region_layout.addRow("Spellbox Region:", region_btn_layout)
-        region_box.setLayout(region_layout)
-        layout.addWidget(region_box)
-        
-        # Apply button
-        self.apply_btn = QPushButton("Apply Setup")
-        self.apply_btn.clicked.connect(self.apply_setup)
-        layout.addWidget(self.apply_btn)
-        
-        # Add spacer
-        layout.addStretch()
 
     def set_wow_theme(self):
         """Set World of Warcraft theme for the application."""
-        wow_palette = QPalette()
-        
-        # WoW themed colors - based on the UI colors in game
-        wow_dark_blue = QColor(15, 25, 41)      # Dark blue background
+        # WoW themed colors
+        wow_dark_blue = QColor(15, 25, 41)      # Dark background like WoW UI panels
         wow_medium_blue = QColor(24, 41, 66)    # Medium blue for alternate backgrounds
         wow_light_blue = QColor(52, 86, 127)    # Light blue for highlights
-        wow_gold = QColor(218, 165, 32)         # Gold for important elements
-        wow_text = QColor(255, 209, 0)          # Gold text
-        wow_button_text = QColor(255, 255, 255) # White text for buttons
+        wow_gold = QColor(218, 165, 32)         # WoW gold for borders and important elements
+        wow_bright_gold = QColor(255, 209, 0)   # Brighter gold for text
         
-        # Set colors
+        # Create palette and apply colors
+        wow_palette = QPalette()
         wow_palette.setColor(QPalette.Window, wow_dark_blue)
-        wow_palette.setColor(QPalette.WindowText, wow_text)
+        wow_palette.setColor(QPalette.WindowText, wow_bright_gold)
         wow_palette.setColor(QPalette.Base, wow_medium_blue)
         wow_palette.setColor(QPalette.AlternateBase, wow_dark_blue)
-        wow_palette.setColor(QPalette.ToolTipBase, wow_medium_blue)
-        wow_palette.setColor(QPalette.ToolTipText, wow_text)
-        wow_palette.setColor(QPalette.Text, wow_text)  # Changed to gold text
+        wow_palette.setColor(QPalette.ToolTipBase, wow_dark_blue)
+        wow_palette.setColor(QPalette.ToolTipText, wow_bright_gold)
+        wow_palette.setColor(QPalette.Text, wow_bright_gold)
         wow_palette.setColor(QPalette.Button, wow_light_blue)
-        wow_palette.setColor(QPalette.ButtonText, wow_button_text)
-        wow_palette.setColor(QPalette.BrightText, QColor(255, 255, 255))
+        wow_palette.setColor(QPalette.ButtonText, Qt.white)
+        wow_palette.setColor(QPalette.BrightText, Qt.white)
         wow_palette.setColor(QPalette.Link, wow_gold)
         wow_palette.setColor(QPalette.Highlight, wow_gold)
-        wow_palette.setColor(QPalette.HighlightedText, QColor(0, 0, 0))
+        wow_palette.setColor(QPalette.HighlightedText, Qt.black)
         
         self.setPalette(wow_palette)
         
-        # Create and set a stylesheet for additional styling
-        stylesheet = """
+        # Apply WoW-style stylesheet
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #0F1929; /* Dark blue background */
+            }
+            
+            QWidget {
+                background-color: #0F1929;
+                color: #FFD100;
+            }
+            
             QGroupBox {
-                border: 1px solid #D4AF37;
+                border: 1px solid #D4AF37; /* Gold border */
                 border-radius: 5px;
                 margin-top: 15px;
                 font-weight: bold;
                 font-size: 14px;
                 padding: 8px;
             }
+            
             QGroupBox::title {
                 subcontrol-origin: margin;
                 subcontrol-position: top center;
                 padding: 0 10px;
-                color: #FFD100;
+                color: #FFD100; /* Gold text */
+                background-color: #0F1929; /* Match the dark background */
             }
+            
             QPushButton {
-                background-color: #344E7F;
-                border: 1px solid #D4AF37;
+                background-color: #344E7F; /* WoW blue button */
+                border: 1px solid #D4AF37; /* Gold border */
                 border-radius: 3px;
                 padding: 8px;
                 font-weight: bold;
                 min-height: 24px;
+                color: white;
             }
+            
             QPushButton:hover {
-                background-color: #4A6EA5;
+                background-color: #4A6EA5; /* Lighter blue when hovering */
             }
+            
             QPushButton:pressed {
-                background-color: #263A5E;
+                background-color: #263A5E; /* Darker blue when pressed */
             }
+            
             QTabWidget::pane {
-                border: 1px solid #D4AF37;
+                border: 1px solid #D4AF37; /* Gold border */
                 border-radius: 3px;
                 top: -1px;
             }
+            
             QTabBar::tab {
-                background-color: #19294A;
-                color: #FFD100;
-                border: 1px solid #D4AF37;
+                background-color: #19294A; /* Darker blue for tabs */
+                color: #FFD100; /* Gold text */
+                border: 1px solid #D4AF37; /* Gold border */
                 border-bottom-color: #19294A;
                 border-top-left-radius: 6px;
                 border-top-right-radius: 6px;
@@ -497,58 +457,60 @@ class AutoHekiliGUI(QMainWindow):
                 font-weight: bold;
                 margin-right: 4px;
             }
+            
             QTabBar::tab:selected {
-                background-color: #344E7F;
+                background-color: #344E7F; /* Brighter blue for selected tab */
                 border-bottom-color: #344E7F;
             }
+            
             QTabBar::tab:!selected {
                 margin-top: 2px;
             }
+            
             QLineEdit, QComboBox {
-                background-color: #19294A;
-                border: 1px solid #344E7F;
+                background-color: #19294A; /* Darker blue for input fields */
+                border: 1px solid #344E7F; /* Blue border */
                 border-radius: 3px;
                 padding: 5px;
-                color: #FFD100;
+                color: #FFD100; /* Gold text */
                 font-weight: bold;
                 selection-background-color: #4A6EA5;
                 min-height: 24px;
             }
+            
             QTextEdit {
-                background-color: #19294A;
-                border: 1px solid #344E7F;
+                background-color: #19294A; /* Darker blue */
+                border: 1px solid #344E7F; /* Blue border */
                 border-radius: 3px;
                 padding: 5px;
-                color: #CCCCCC;
+                color: #CCCCCC; /* Light gray text for readability */
                 selection-background-color: #4A6EA5;
             }
+            
             QLabel {
-                color: #FFD100;
+                color: #FFD100; /* Gold text */
                 font-weight: bold;
                 padding: 2px;
             }
-            QStatusBar {
-                background-color: #19294A;
-                color: #FFD100;
-                font-weight: bold;
-                border-top: 1px solid #D4AF37;
-                padding: 3px;
-            }
+            
             QScrollArea {
                 border: 1px solid #344E7F;
                 border-radius: 3px;
             }
+            
             QScrollBar:vertical {
                 border: 1px solid #344E7F;
                 background: #19294A;
                 width: 15px;
                 margin: 15px 0 15px 0;
             }
+            
             QScrollBar::handle:vertical {
-                background: #344E7F;
+                background: #344E7F; /* Blue handle */
                 min-height: 20px;
                 border-radius: 3px;
             }
+            
             QScrollBar::add-line:vertical {
                 border: 1px solid #344E7F;
                 background: #344E7F;
@@ -556,6 +518,7 @@ class AutoHekiliGUI(QMainWindow):
                 subcontrol-position: bottom;
                 subcontrol-origin: margin;
             }
+            
             QScrollBar::sub-line:vertical {
                 border: 1px solid #344E7F;
                 background: #344E7F;
@@ -563,193 +526,788 @@ class AutoHekiliGUI(QMainWindow):
                 subcontrol-position: top;
                 subcontrol-origin: margin;
             }
+            
             QScrollBar::up-arrow:vertical, QScrollBar::down-arrow:vertical {
                 width: 8px;
                 height: 8px;
-                background: #FFD100;
+                background: #FFD100; /* Gold arrows */
             }
-            QFormLayout {
-                spacing: 10px;
+            
+            QSlider::groove:horizontal {
+                border: 1px solid #344E7F;
+                background: #19294A;
+                height: 8px;
+                border-radius: 4px;
             }
-        """
-        self.setStyleSheet(stylesheet)
+            
+            QSlider::handle:horizontal {
+                background: #D4AF37; /* Gold handle */
+                border: 1px solid #D4AF37;
+                width: 18px;
+                margin: -2px 0;
+                border-radius: 5px;
+            }
+            
+            QStatusBar {
+                background-color: #19294A;
+                color: #FFD100;
+                font-weight: bold;
+                border-top: 1px solid #D4AF37;
+            }
+        """)
+    
+    def init_setup_tab(self):
+        """Initialize the setup tab with WoW-style interface."""
+        layout = QVBoxLayout(self.setup_tab)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(15)
+        
+        # Introduction
+        intro_box = QGroupBox("Welcome to AUTO_Hekili")
+        intro_box.setStyleSheet("""
+            QGroupBox {
+                background-color: #192742;
+                border: 2px solid #D4AF37;
+                border-radius: 8px;
+            }
+        """)
+        intro_layout = QVBoxLayout()
+        
+        intro_text = QLabel(
+            "<p style='font-size: 13px; line-height: 150%;'>"
+            "This application automates spell casting based on <b>Hekili addon</b> recommendations in World of Warcraft.<br><br>"
+            "<span style='color: #FF6060; font-weight: bold;'>WARNING:</span> Using automation tools may violate World of Warcraft's Terms of Service.<br>"
+            "Use at your own risk!</p>"
+        )
+        intro_text.setTextFormat(Qt.RichText)
+        intro_text.setWordWrap(True)
+        intro_layout.addWidget(intro_text)
+        
+        # Add requirements info
+        requirements = QLabel(
+            "<p style='font-size: 12px;'><b>Requirements:</b><br>"
+            "• <a href='https://www.curseforge.com/wow/addons/hekili'>Hekili Addon</a> installed in WoW<br>"
+            "• Hekili configured to show a single icon recommendation<br>"
+            "• WoW running in Windowed or Windowed (Fullscreen) mode</p>"
+        )
+        requirements.setTextFormat(Qt.RichText)
+        requirements.setWordWrap(True)
+        requirements.setOpenExternalLinks(True)
+        requirements.setStyleSheet("color: #BBBBBB;")
+        intro_layout.addWidget(requirements)
+        
+        intro_box.setLayout(intro_layout)
+        layout.addWidget(intro_box)
+        
+        # Class and spec selection with WoW styling
+        class_box = QGroupBox("Step 1: Select Class & Specialization")
+        class_box.setStyleSheet("""
+            QGroupBox {
+                background-color: #192742;
+                border: 2px solid #D4AF37;
+                border-radius: 8px;
+            }
+        """)
+        class_layout = QVBoxLayout()
+        
+        class_desc = QLabel("Select your character's class and specialization from the dropdown below.")
+        class_desc.setStyleSheet("color: #BBBBBB;")
+        class_layout.addWidget(class_desc)
+        
+        class_combo_layout = QHBoxLayout()
+        class_combo_layout.addWidget(QLabel("Class/Spec:"))
+        
+        self.class_combo = QComboBox()
+        self.class_combo.addItems(self.get_available_classes_specs())
+        self.class_combo.setStyleSheet("""
+            QComboBox {
+                background-color: #19294A;
+                border: 1px solid #344E7F;
+                border-radius: 3px;
+                padding: 5px;
+                color: #FFD100;
+                font-weight: bold;
+                selection-background-color: #4A6EA5;
+                min-width: 200px;
+            }
+            QComboBox::drop-down {
+                border: 0px;
+            }
+            QComboBox::down-arrow {
+                image: url(dropdown_arrow.png);
+                width: 12px;
+                height: 12px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #19294A;
+                border: 1px solid #344E7F;
+                selection-background-color: #4A6EA5;
+                color: #FFD100;
+            }
+        """)
+        
+        if "Class" in self.config and self.config["Class"]:
+            idx = self.class_combo.findText(self.config["Class"])
+            if idx >= 0:
+                self.class_combo.setCurrentIndex(idx)
+        
+        class_combo_layout.addWidget(self.class_combo)
+        class_combo_layout.addStretch()
+        class_layout.addLayout(class_combo_layout)
+        
+        class_box.setLayout(class_layout)
+        layout.addWidget(class_box)
+        
+        # Screen region selection with WoW styling
+        region_box = QGroupBox("Step 2: Select Hekili Spellbox Region")
+        region_box.setStyleSheet("""
+            QGroupBox {
+                background-color: #192742;
+                border: 2px solid #D4AF37;
+                border-radius: 8px;
+            }
+        """)
+        region_layout = QVBoxLayout()
+        
+        region_desc = QLabel(
+            "Select the screen region where Hekili displays its primary spell recommendation icon.<br>"
+            "<b>Tip:</b> Make sure to capture only the primary icon, not the entire action bar."
+        )
+        region_desc.setTextFormat(Qt.RichText)
+        region_desc.setStyleSheet("color: #BBBBBB;")
+        region_desc.setWordWrap(True)
+        region_layout.addWidget(region_desc)
+        
+        region_btn_layout = QHBoxLayout()
+        region_btn_layout.addWidget(QLabel("Selected Region:"))
+        
+        self.region_label = QLabel("Not selected")
+        self.region_label.setStyleSheet("""
+            background-color: #19294A;
+            border: 1px solid #344E7F;
+            border-radius: 3px;
+            padding: 5px;
+            color: #FFD100;
+            min-width: 120px;
+        """)
+        region_btn_layout.addWidget(self.region_label)
+        
+        self.select_region_btn = QPushButton("Select Region")
+        self.select_region_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #344E7F;
+                color: white;
+                font-weight: bold;
+                border: 1px solid #D4AF37;
+                border-radius: 3px;
+                padding: 8px;
+                min-width: 120px;
+            }
+            QPushButton:hover {
+                background-color: #4A6EA5;
+            }
+        """)
+        self.select_region_btn.clicked.connect(self.select_region)
+        region_btn_layout.addWidget(self.select_region_btn)
+        region_btn_layout.addStretch()
+        region_layout.addLayout(region_btn_layout)
+        
+        region_box.setLayout(region_layout)
+        layout.addWidget(region_box)
+        
+        # Apply setup with WoW styling
+        apply_box = QGroupBox("Step 3: Apply Setup")
+        apply_box.setStyleSheet("""
+            QGroupBox {
+                background-color: #192742;
+                border: 2px solid #D4AF37;
+                border-radius: 8px;
+            }
+        """)
+        apply_layout = QVBoxLayout()
+        
+        apply_desc = QLabel(
+            "Once you've selected your class/spec and the Hekili icon region, click Apply Setup to proceed to keybindings."
+        )
+        apply_desc.setStyleSheet("color: #BBBBBB;")
+        apply_desc.setWordWrap(True)
+        apply_layout.addWidget(apply_desc)
+        
+        self.apply_btn = QPushButton("APPLY SETUP")
+        self.apply_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #1F6032;
+                color: white;
+                font-weight: bold;
+                border: 2px solid #D4AF37;
+                border-radius: 5px;
+                padding: 10px;
+                font-size: 13px;
+                min-height: 30px;
+            }
+            QPushButton:hover {
+                background-color: #2A8045;
+            }
+        """)
+        self.apply_btn.clicked.connect(self.apply_setup)
+        
+        apply_layout.addWidget(self.apply_btn, alignment=Qt.AlignCenter)
+        apply_box.setLayout(apply_layout)
+        layout.addWidget(apply_box)
+        
+        # Add spacer
+        layout.addStretch()
     
     def init_config_tab(self):
-        """Initialize the configuration tab."""
+        """Initialize the keybindings tab with WoW-style interface."""
         layout = QVBoxLayout(self.config_tab)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(10)
         
-        # Create a scroll area for keybindings
+        # Header with instructions
+        header_box = QGroupBox("Keybinding Instructions")
+        header_box.setStyleSheet("""
+            QGroupBox {
+                background-color: #192742;
+                border: 2px solid #D4AF37;
+                border-radius: 8px;
+            }
+        """)
+        header_layout = QVBoxLayout()
+        
+        instructions = QLabel(
+            "Configure keybindings for your spells. These must match your in-game keybindings.<br>"
+            "• Leave empty or type 'skip' to ignore spells you don't want to cast<br>"
+            "• For modifier keys, use format: <b>alt+key</b>, <b>ctrl+key</b>, <b>shift+key</b> (e.g., 'alt+1', 'ctrl+f')"
+        )
+        instructions.setTextFormat(Qt.RichText)
+        instructions.setWordWrap(True)
+        instructions.setStyleSheet("color: #BBBBBB; padding: 5px;")
+        header_layout.addWidget(instructions)
+        header_box.setLayout(header_layout)
+        layout.addWidget(header_box)
+        
+        # Create a scroll area with WoW styling
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("""
+            QScrollArea {
+                background-color: #0F1929;
+                border: 2px solid #344E7F;
+                border-radius: 5px;
+            }
+        """)
+        
+        # Create the keybind widget
         self.keybind_widget = QWidget()
-        self.keybind_layout = QFormLayout(self.keybind_widget)
+        self.keybind_widget.setStyleSheet("background-color: #0F1929;")
+        
+        # Use grid layout for better control
+        self.keybind_layout = QGridLayout(self.keybind_widget)
+        self.keybind_layout.setContentsMargins(5, 5, 5, 5)
+        self.keybind_layout.setSpacing(0)
+        
+        # Add header row
+        header_font = QFont()
+        header_font.setBold(True)
+        
+        header_spell = QLabel("Spell Name")
+        header_spell.setFont(header_font)
+        header_spell.setStyleSheet("color: #FFD100; padding: 5px; border-bottom: 1px solid #344E7F;")
+        self.keybind_layout.addWidget(header_spell, 0, 0)
+        
+        header_key = QLabel("Keybind")
+        header_key.setFont(header_font)
+        header_key.setStyleSheet("color: #FFD100; padding: 5px; border-bottom: 1px solid #344E7F;")
+        header_key.setAlignment(Qt.AlignCenter)
+        self.keybind_layout.addWidget(header_key, 0, 1)
+        
         scroll.setWidget(self.keybind_widget)
-        
-        # Add instructions
-        instructions = QLabel(
-            "Configure keybindings for your spells. These must match your in-game keybindings.\n"
-            "Leave empty or type 'skip' to ignore spells you don't use.\n"
-            "For modifier keys, use: alt+key, ctrl+key, shift+key (e.g., 'alt+1', 'ctrl+f')"
-        )
-        instructions.setWordWrap(True)
-        layout.addWidget(instructions)
-        
-        # Add scroll area
         layout.addWidget(scroll)
         
-        # Buttons
-        btn_layout = QHBoxLayout()
+        # Button container with WoW styling
+        button_container = QWidget()
+        button_container.setStyleSheet("background-color: transparent;")
+        button_layout = QHBoxLayout(button_container)
+        button_layout.setContentsMargins(0, 10, 0, 0)
+        
+        # Save button with green background
         self.save_keybinds_btn = QPushButton("Save Keybindings")
+        self.save_keybinds_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #1F6032;
+                color: white;
+                font-weight: bold;
+                border: 1px solid #D4AF37;
+                border-radius: 3px;
+                padding: 8px;
+                min-height: 30px;
+            }
+            QPushButton:hover {
+                background-color: #2A8045;
+            }
+        """)
         self.save_keybinds_btn.clicked.connect(self.save_keybindings)
+        button_layout.addWidget(self.save_keybinds_btn)
+        
+        # Reset button with red background
         self.reset_keybinds_btn = QPushButton("Reset All")
+        self.reset_keybinds_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #722424;
+                color: white;
+                font-weight: bold;
+                border: 1px solid #D4AF37;
+                border-radius: 3px;
+                padding: 8px;
+                min-height: 30px;
+            }
+            QPushButton:hover {
+                background-color: #9B3232;
+            }
+        """)
         self.reset_keybinds_btn.clicked.connect(self.reset_keybindings)
-        btn_layout.addWidget(self.save_keybinds_btn)
-        btn_layout.addWidget(self.reset_keybinds_btn)
-        layout.addLayout(btn_layout)
+        button_layout.addWidget(self.reset_keybinds_btn)
+        
+        layout.addWidget(button_container)
+        
+        # Add key hints at bottom
+        hints_label = QLabel(
+            "<b>Pro Tips:</b> For best results, use simple keys like 1-9 or F1-F12.<br>"
+            "Avoid using modifiers for frequently cast spells."
+        )
+        hints_label.setTextFormat(Qt.RichText)
+        hints_label.setStyleSheet("color: #BBBBBB; font-style: italic; margin-top: 10px;")
+        layout.addWidget(hints_label)
     
     def init_debug_tab(self):
-        """Initialize the debug tab."""
+        """Initialize the debug tab with WoW-style interface."""
         layout = QVBoxLayout(self.debug_tab)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(10)
         
-        # Split the debug tab into two parts
+        # Split the debug tab into two parts with WoW-style splitter
         splitter = QSplitter(Qt.Vertical)
+        splitter.setHandleWidth(8)
+        splitter.setStyleSheet("""
+            QSplitter::handle {
+                background-color: #344E7F;
+                border: 1px solid #D4AF37;
+            }
+        """)
         
         # Top part - testing controls
         top_widget = QWidget()
+        top_widget.setStyleSheet("background-color: #0F1929;")
         top_layout = QVBoxLayout(top_widget)
+        top_layout.setContentsMargins(0, 0, 0, 0)
         
         # Problem spell testing
-        problem_box = QGroupBox("Test Problematic Spells")
+        problem_box = QGroupBox("Test Recognition for Problematic Spells")
+        problem_box.setStyleSheet("""
+            QGroupBox {
+                background-color: #192742;
+                border: 2px solid #D4AF37;
+                border-radius: 8px;
+            }
+        """)
         problem_layout = QVBoxLayout()
         
         # Instructions
         test_instructions = QLabel(
-            "Test recognition for problematic spells like Storm Elemental and Ascendance.\n"
-            "Make sure Hekili is showing the spell you want to test before clicking the test button."
+            "Test recognition for problematic spells that might need special handling.<br>"
+            "<b>Step 1:</b> Make sure Hekili is showing the spell you want to test in-game.<br>"
+            "<b>Step 2:</b> Click the test button for that spell to check if it's recognized properly."
         )
+        test_instructions.setTextFormat(Qt.RichText)
         test_instructions.setWordWrap(True)
+        test_instructions.setStyleSheet("color: #BBBBBB; padding: 5px;")
         problem_layout.addWidget(test_instructions)
         
-        # Test buttons for specific problem spells
+        # Test buttons with spell icons
         btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(15)
+        
+        # Storm Elemental button
+        storm_btn_container = QWidget()
+        storm_btn_layout = QVBoxLayout(storm_btn_container)
+        storm_btn_layout.setContentsMargins(5, 5, 5, 5)
+        
         self.test_storm_btn = QPushButton("Test Storm Elemental")
+        self.test_storm_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #344E7F;
+                color: white;
+                font-weight: bold;
+                border: 1px solid #D4AF37;
+                border-radius: 3px;
+                padding: 8px;
+            }
+            QPushButton:hover {
+                background-color: #4A6EA5;
+            }
+        """)
         self.test_storm_btn.clicked.connect(lambda: self.test_spell_recognition("storm_elemental"))
+        storm_btn_layout.addWidget(self.test_storm_btn)
+        
+        # Storm Elemental description
+        storm_desc = QLabel("Tests if Storm Elemental icon is properly detected")
+        storm_desc.setStyleSheet("color: #BBBBBB; font-style: italic; font-size: 11px;")
+        storm_btn_layout.addWidget(storm_desc)
+        
+        btn_layout.addWidget(storm_btn_container)
+        
+        # Ascendance button
+        asc_btn_container = QWidget()
+        asc_btn_layout = QVBoxLayout(asc_btn_container)
+        asc_btn_layout.setContentsMargins(5, 5, 5, 5)
+        
         self.test_ascendance_btn = QPushButton("Test Ascendance")
+        self.test_ascendance_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #344E7F;
+                color: white;
+                font-weight: bold;
+                border: 1px solid #D4AF37;
+                border-radius: 3px;
+                padding: 8px;
+            }
+            QPushButton:hover {
+                background-color: #4A6EA5;
+            }
+        """)
         self.test_ascendance_btn.clicked.connect(lambda: self.test_spell_recognition("ascendance"))
-        btn_layout.addWidget(self.test_storm_btn)
-        btn_layout.addWidget(self.test_ascendance_btn)
+        asc_btn_layout.addWidget(self.test_ascendance_btn)
+        
+        # Ascendance description
+        asc_desc = QLabel("Tests if Ascendance icon is properly detected")
+        asc_desc.setStyleSheet("color: #BBBBBB; font-style: italic; font-size: 11px;")
+        asc_btn_layout.addWidget(asc_desc)
+        
+        btn_layout.addWidget(asc_btn_container)
         problem_layout.addLayout(btn_layout)
         
-        # Threshold adjustment
-        threshold_layout = QHBoxLayout()
-        threshold_layout.addWidget(QLabel("Recognition Threshold:"))
+        # Threshold adjustment with WoW styling
+        threshold_box = QGroupBox("Recognition Settings")
+        threshold_box.setStyleSheet("""
+            QGroupBox {
+                background-color: #0F1929;
+                border: 1px solid #344E7F;
+                border-radius: 5px;
+                margin-top: 15px;
+            }
+        """)
+        threshold_layout = QVBoxLayout()
+        
+        threshold_desc = QLabel("Adjust the threshold for spell recognition. Lower values make recognition more sensitive but may cause false positives.")
+        threshold_desc.setWordWrap(True)
+        threshold_desc.setStyleSheet("color: #BBBBBB; font-style: italic;")
+        threshold_layout.addWidget(threshold_desc)
+        
+        slider_layout = QHBoxLayout()
+        slider_layout.addWidget(QLabel("Threshold:"))
+        
         self.threshold_slider = QSlider(Qt.Horizontal)
         self.threshold_slider.setMinimum(5)
         self.threshold_slider.setMaximum(25)
         self.threshold_slider.setValue(15)
         self.threshold_slider.setTickPosition(QSlider.TicksBelow)
         self.threshold_slider.setTickInterval(5)
-        self.threshold_label = QLabel("15")
+        self.threshold_slider.setStyleSheet("""
+            QSlider::groove:horizontal {
+                background: #19294A;
+                height: 8px;
+                border-radius: 4px;
+            }
+            QSlider::handle:horizontal {
+                background: #D4AF37;
+                border: 1px solid #D4AF37;
+                width: 18px;
+                margin: -2px 0;
+                border-radius: 5px;
+            }
+        """)
         self.threshold_slider.valueChanged.connect(self.update_threshold_label)
-        threshold_layout.addWidget(self.threshold_slider)
-        threshold_layout.addWidget(self.threshold_label)
-        problem_layout.addLayout(threshold_layout)
+        slider_layout.addWidget(self.threshold_slider)
         
-        # Capture preview
-        capture_layout = QHBoxLayout()
-        capture_layout.addWidget(QLabel("Current Capture:"))
-        self.refresh_capture_btn = QPushButton("Refresh")
-        self.refresh_capture_btn.clicked.connect(self.refresh_capture)
-        capture_layout.addWidget(self.refresh_capture_btn)
-        problem_layout.addLayout(capture_layout)
+        self.threshold_label = QLabel("15")
+        self.threshold_label.setStyleSheet("color: #FFD100; font-weight: bold; min-width: 30px;")
+        slider_layout.addWidget(self.threshold_label)
+        
+        threshold_layout.addLayout(slider_layout)
+        threshold_box.setLayout(threshold_layout)
+        problem_layout.addWidget(threshold_box)
+        
+        # Capture preview with WoW styling
+        capture_box = QGroupBox("Current Capture")
+        capture_box.setStyleSheet("""
+            QGroupBox {
+                background-color: #0F1929;
+                border: 1px solid #344E7F;
+                border-radius: 5px;
+                margin-top: 15px;
+            }
+        """)
+        capture_layout = QVBoxLayout()
+        
+        preview_container = QWidget()
+        preview_layout = QHBoxLayout(preview_container)
+        preview_layout.setContentsMargins(0, 0, 0, 0)
         
         self.preview_label = QLabel()
         self.preview_label.setFixedSize(100, 100)
         self.preview_label.setAlignment(Qt.AlignCenter)
-        self.preview_label.setFrameShape(QFrame.Box)
-        problem_layout.addWidget(self.preview_label, alignment=Qt.AlignHCenter)
+        self.preview_label.setStyleSheet("""
+            border: 2px solid #344E7F;
+            background-color: #0A101E;
+        """)
+        preview_layout.addWidget(self.preview_label, alignment=Qt.AlignCenter)
+        
+        self.refresh_capture_btn = QPushButton("Refresh Capture")
+        self.refresh_capture_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #344E7F;
+                color: white;
+                font-weight: bold;
+                border: 1px solid #D4AF37;
+                border-radius: 3px;
+                padding: 8px;
+            }
+        """)
+        self.refresh_capture_btn.clicked.connect(self.refresh_capture)
+        preview_layout.addWidget(self.refresh_capture_btn)
+        
+        capture_layout.addWidget(preview_container, alignment=Qt.AlignCenter)
+        capture_box.setLayout(capture_layout)
+        problem_layout.addWidget(capture_box)
         
         problem_box.setLayout(problem_layout)
         top_layout.addWidget(problem_box)
         
         splitter.addWidget(top_widget)
         
-        # Bottom part - debug log
+        # Bottom part - debug log with WoW styling
         log_widget = QWidget()
+        log_widget.setStyleSheet("background-color: #0F1929;")
         log_layout = QVBoxLayout(log_widget)
+        log_layout.setContentsMargins(0, 0, 0, 0)
         
-        log_layout.addWidget(QLabel("Debug Log:"))
+        log_box = QGroupBox("Debug Log")
+        log_box.setStyleSheet("""
+            QGroupBox {
+                background-color: #192742;
+                border: 2px solid #D4AF37;
+                border-radius: 8px;
+            }
+        """)
+        log_inner_layout = QVBoxLayout()
+        
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        log_layout.addWidget(self.log_text)
+        self.log_text.setStyleSheet("""
+            QTextEdit {
+                background-color: #0A101E;
+                border: 1px solid #344E7F;
+                border-radius: 3px;
+                color: #CCCCCC;
+                selection-background-color: #4A6EA5;
+                font-family: Consolas, Courier, monospace;
+            }
+        """)
+        log_inner_layout.addWidget(self.log_text)
+        
+        # Add clear log button
+        self.clear_log_btn = QPushButton("Clear Log")
+        self.clear_log_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #344E7F;
+                color: white;
+                border: 1px solid #D4AF37;
+                border-radius: 3px;
+                padding: 5px;
+            }
+        """)
+        self.clear_log_btn.clicked.connect(self.log_text.clear)
+        log_inner_layout.addWidget(self.clear_log_btn, alignment=Qt.AlignRight)
+        
+        log_box.setLayout(log_inner_layout)
+        log_layout.addWidget(log_box)
         
         splitter.addWidget(log_widget)
         
         # Set initial sizes
-        splitter.setSizes([300, 400])
+        splitter.setSizes([350, 350])
         
         layout.addWidget(splitter)
     
     def init_runner_tab(self):
-        """Initialize the runner tab."""
+        """Initialize the runner tab with WoW-style interface."""
         layout = QVBoxLayout(self.runner_tab)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(10)
         
-        # Status group
-        status_box = QGroupBox("Automation Status")
+        # Top status panel
+        status_box = QGroupBox("Spell Automation Status")
+        status_box.setStyleSheet("""
+            QGroupBox {
+                background-color: #192742;
+                border: 2px solid #D4AF37;
+                border-radius: 8px;
+            }
+        """)
         status_layout = QGridLayout()
+        status_layout.setVerticalSpacing(10)
+        status_layout.setHorizontalSpacing(20)
         
-        status_layout.addWidget(QLabel("Status:"), 0, 0)
+        # Status indicators
+        status_layout.addWidget(QLabel("Current Status:"), 0, 0)
         self.status_label = QLabel("Not Running")
+        self.status_label.setStyleSheet("""
+            font-size: 14px;
+            font-weight: bold;
+            color: #FF4444;
+        """)
         status_layout.addWidget(self.status_label, 0, 1)
         
-        status_layout.addWidget(QLabel("Current Spell:"), 1, 0)
-        self.current_spell_label = QLabel("None")
-        status_layout.addWidget(self.current_spell_label, 1, 1)
+        # Current spell with icon placeholder
+        status_layout.addWidget(QLabel("Active Spell:"), 1, 0)
         
+        spell_container = QWidget()
+        spell_layout = QHBoxLayout(spell_container)
+        spell_layout.setContentsMargins(0, 0, 0, 0)
+        spell_layout.setSpacing(5)
+        
+        self.spell_icon = QLabel()
+        self.spell_icon.setFixedSize(24, 24)
+        self.spell_icon.setStyleSheet("background-color: transparent;")
+        spell_layout.addWidget(self.spell_icon)
+        
+        self.current_spell_label = QLabel("None")
+        self.current_spell_label.setStyleSheet("font-weight: bold; color: #FFD100;")
+        spell_layout.addWidget(self.current_spell_label)
+        spell_layout.addStretch()
+        
+        status_layout.addWidget(spell_container, 1, 1)
+        
+        # Toggle key with WoW keybind styling
         status_layout.addWidget(QLabel("Toggle Key:"), 2, 0)
-        status_layout.addWidget(QLabel("F3"), 2, 1)
+        
+        f3_key = QLabel("F3")
+        f3_key.setStyleSheet("""
+            background-color: #19294A;
+            border: 1px solid #D4AF37;
+            border-radius: 4px;
+            padding: 3px 8px;
+            font-weight: bold;
+            color: #FFD100;
+            min-width: 30px;
+            text-align: center;
+        """)
+        status_layout.addWidget(f3_key, 2, 1)
+        
+        # Add warning about ENTER key (important for WoW chat)
+        warning_label = QLabel("WARNING: Pressing ENTER in-game will send keys to chat!")
+        warning_label.setStyleSheet("color: #FF6060; font-style: italic;")
+        status_layout.addWidget(warning_label, 3, 0, 1, 2)
         
         status_box.setLayout(status_layout)
         layout.addWidget(status_box)
         
-        # Preview group
-        preview_box = QGroupBox("Live Preview")
+        # Middle section with preview
+        middle_section = QHBoxLayout()
+        
+        # Preview group with WoW UI styling
+        preview_box = QGroupBox("Live Spell Preview")
+        preview_box.setStyleSheet("""
+            QGroupBox {
+                background-color: #192742;
+                border: 2px solid #D4AF37;
+                border-radius: 8px;
+            }
+        """)
         preview_layout = QVBoxLayout()
         
         self.live_preview = QLabel()
         self.live_preview.setFixedSize(150, 150)
         self.live_preview.setAlignment(Qt.AlignCenter)
         self.live_preview.setFrameShape(QFrame.Box)
+        self.live_preview.setStyleSheet("""
+            border: 2px solid #344E7F;
+            background-color: #0F1929;
+        """)
         
         preview_layout.addWidget(self.live_preview, alignment=Qt.AlignHCenter)
         preview_box.setLayout(preview_layout)
-        layout.addWidget(preview_box)
+        middle_section.addWidget(preview_box)
         
-        # Button group
-        btn_box = QGroupBox("Control")
-        btn_layout = QVBoxLayout()
+        # Control panel
+        control_box = QGroupBox("Automation Control")
+        control_box.setStyleSheet("""
+            QGroupBox {
+                background-color: #192742;
+                border: 2px solid #D4AF37;
+                border-radius: 8px;
+            }
+        """)
+        control_layout = QVBoxLayout()
         
-        self.start_stop_btn = QPushButton("Start Automation")
+        # Big start/stop button like a WoW action button
+        self.start_stop_btn = QPushButton("START AUTOMATION")
+        self.start_stop_btn.setMinimumHeight(50)
+        self.start_stop_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #1F6032; /* Green background */
+                color: white;
+                font-weight: bold;
+                font-size: 14px;
+                border: 2px solid #D4AF37;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #2A8045;
+            }
+            QPushButton:pressed {
+                background-color: #184D28;
+            }
+        """)
         self.start_stop_btn.clicked.connect(self.toggle_automation)
-        btn_layout.addWidget(self.start_stop_btn)
+        control_layout.addWidget(self.start_stop_btn)
         
-        btn_box.setLayout(btn_layout)
-        layout.addWidget(btn_box)
+        # Status toggle button (emulates F3)
+        self.toggle_status_btn = QPushButton("Toggle Active/Paused (F3)")
+        self.toggle_status_btn.clicked.connect(lambda: keyboard.press_and_release('f3'))
+        control_layout.addWidget(self.toggle_status_btn)
         
-        # Instructions
+        control_box.setLayout(control_layout)
+        middle_section.addWidget(control_box)
+        
+        layout.addLayout(middle_section)
+        
+        # Bottom section - instructions
+        instruction_box = QGroupBox("Quick Guide")
+        instruction_box.setStyleSheet("""
+            QGroupBox {
+                background-color: #192742;
+                border: 2px solid #D4AF37;
+                border-radius: 8px;
+            }
+        """)
+        instruction_layout = QVBoxLayout()
+        
         instructions = QLabel(
-            "Instructions:\n"
-            "1. Configure your setup in the Setup tab\n"
-            "2. Set keybindings in the Keybindings tab\n"
-            "3. Test problematic spells in the Debug tab if needed\n"
-            "4. Click 'Start Automation' to begin\n"
-            "5. Press F3 at any time to toggle automation on/off"
+            "<b>How to use:</b><br>"
+            "1. Ensure your setup and keybindings are configured<br>"
+            "2. Click START AUTOMATION to begin<br>"
+            "3. Press <b>F3</b> in-game to toggle automation active/paused<br>"
+            "4. Watch the preview panel to see which spell is being detected<br>"
+            "<br><i>Remember: This works best with Hekili addon's \"1-button mode\" settings</i>"
         )
+        instructions.setTextFormat(Qt.RichText)
         instructions.setWordWrap(True)
-        layout.addWidget(instructions)
-        
-        # Add spacer
-        layout.addStretch()
+        instructions.setStyleSheet("color: #BBBBBB; padding: 5px;")
+        instruction_layout.addWidget(instructions)
+        instruction_box.setLayout(instruction_layout)
+        layout.addWidget(instruction_box)
     
     def set_dark_theme(self):
         """Set dark theme for the application."""
@@ -906,10 +1464,13 @@ class AutoHekiliGUI(QMainWindow):
         return spells
     
     def populate_keybindings(self):
-        """Populate the keybinding form with current spell info."""
-        # Clear existing widgets
-        while self.keybind_layout.rowCount() > 0:
-            self.keybind_layout.removeRow(0)
+        """Populate the keybinding grid with current spell info and WoW styling."""
+        # Clear existing widgets (removing everything except header row)
+        for i in reversed(range(1, self.keybind_layout.rowCount())):
+            for j in range(self.keybind_layout.columnCount()):
+                widget = self.keybind_layout.itemAtPosition(i, j)
+                if widget and widget.widget():
+                    widget.widget().deleteLater()
         
         self.keybind_inputs = {}
         
@@ -920,9 +1481,20 @@ class AutoHekiliGUI(QMainWindow):
                     self.spell_info[spell_name]["key"] = key
         
         # Create inputs for each spell
+        row = 1  # Start after header row
         for spell_name in sorted(self.spell_info.keys()):
-            # Create horizontal layout for spell
-            row_layout = QHBoxLayout()
+            # Create spell name container with icon
+            spell_container = QWidget()
+            
+            # Set alternating row background colors
+            if row % 2 == 0:
+                spell_container.setStyleSheet("background-color: #192742;")
+            else:
+                spell_container.setStyleSheet("background-color: #0F1929;")
+            
+            spell_layout = QHBoxLayout(spell_container)
+            spell_layout.setContentsMargins(5, 5, 5, 5)
+            spell_layout.setSpacing(10)
             
             # Add spell icon if available
             icon_path = self.spell_info[spell_name]["icon_path"]
@@ -933,16 +1505,52 @@ class AutoHekiliGUI(QMainWindow):
                 qimg = pil_to_qimage(img)
                 pixmap = QPixmap.fromImage(qimg)
                 icon_label.setPixmap(pixmap)
-                row_layout.addWidget(icon_label)
+                spell_layout.addWidget(icon_label)
             
-            # Add input field
+            # Add spell name label
+            name_label = QLabel(spell_name)
+            name_label.setStyleSheet("color: #FFD100; font-weight: bold;")
+            spell_layout.addWidget(name_label)
+            spell_layout.addStretch()
+            
+            self.keybind_layout.addWidget(spell_container, row, 0)
+            
+            # Create input container
+            input_container = QWidget()
+            if row % 2 == 0:
+                input_container.setStyleSheet("background-color: #192742;")
+            else:
+                input_container.setStyleSheet("background-color: #0F1929;")
+            
+            input_layout = QHBoxLayout(input_container)
+            input_layout.setContentsMargins(5, 5, 5, 5)
+            
+            # Add input field with WoW styling
             key_input = QLineEdit()
             key_input.setText(self.spell_info[spell_name]["key"])
-            self.keybind_inputs[spell_name] = key_input
-            row_layout.addWidget(key_input)
+            key_input.setStyleSheet("""
+                QLineEdit {
+                    background-color: #19294A;
+                    border: 1px solid #344E7F;
+                    border-radius: 3px;
+                    padding: 5px;
+                    color: #FFD100;
+                    font-weight: bold;
+                    selection-background-color: #4A6EA5;
+                    max-width: 150px;
+                }
+            """)
+            key_input.setAlignment(Qt.AlignCenter)
+            input_layout.addWidget(key_input, alignment=Qt.AlignCenter)
             
-            # Add row to form
-            self.keybind_layout.addRow(spell_name, row_layout)
+            self.keybind_inputs[spell_name] = key_input
+            self.keybind_layout.addWidget(input_container, row, 1)
+            
+            row += 1
+        
+        # Set column stretches
+        self.keybind_layout.setColumnStretch(0, 3)  # Spell name gets more space
+        self.keybind_layout.setColumnStretch(1, 1)  # Key binding gets less space
     
     def save_keybindings(self):
         """Save keybindings to configuration."""
@@ -1044,11 +1652,11 @@ class AutoHekiliGUI(QMainWindow):
         self.test_thread.start()
     
     def toggle_automation(self):
-        """Start or stop the automation."""
+        """Start or stop the automation with enhanced visual feedback."""
         if not self.capture_thread or not self.capture_thread.running:
             # Start automation
             if not self.box_position or not self.spell_info:
-                QMessageBox.warning(self, "Error", "Please configure class, screen region, and keybindings first.")
+                QMessageBox.warning(self, "Setup Error", "Please configure class, screen region, and keybindings first.")
                 return
             
             # Check if we have any keybindings configured
@@ -1059,7 +1667,7 @@ class AutoHekiliGUI(QMainWindow):
                     break
             
             if not has_keybindings:
-                QMessageBox.warning(self, "Error", "No keybindings configured. Please set up keybindings first.")
+                QMessageBox.warning(self, "Setup Error", "No keybindings configured. Please set up keybindings first.")
                 return
             
             # Log problem spells
@@ -1088,9 +1696,27 @@ class AutoHekiliGUI(QMainWindow):
             self.capture_thread.image_signal.connect(self.update_live_preview)
             self.capture_thread.start()
             
-            # Update UI
-            self.start_stop_btn.setText("Stop Automation")
+            # Update UI with WoW styling for "running" state
+            self.start_stop_btn.setText("STOP AUTOMATION")
+            self.start_stop_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #722424; /* Red background for stop */
+                    color: white;
+                    font-weight: bold;
+                    font-size: 14px;
+                    border: 2px solid #D4AF37;
+                    border-radius: 5px;
+                }
+                QPushButton:hover {
+                    background-color: #9B3232;
+                }
+            """)
             self.status_label.setText("Running")
+            self.status_label.setStyleSheet("""
+                font-size: 14px;
+                font-weight: bold;
+                color: #40FF40; /* Green for running */
+            """)
             self.statusBar().showMessage("Automation started")
         else:
             # Stop automation
@@ -1098,15 +1724,46 @@ class AutoHekiliGUI(QMainWindow):
                 self.capture_thread.stop()
                 self.log("Automation stopped")
                 
-                # Update UI
-                self.start_stop_btn.setText("Start Automation")
+                # Update UI with WoW styling for "stopped" state
+                self.start_stop_btn.setText("START AUTOMATION")
+                self.start_stop_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #1F6032; /* Green background for start */
+                        color: white;
+                        font-weight: bold;
+                        font-size: 14px;
+                        border: 2px solid #D4AF37;
+                        border-radius: 5px;
+                    }
+                    QPushButton:hover {
+                        background-color: #2A8045;
+                    }
+                """)
                 self.status_label.setText("Not Running")
+                self.status_label.setStyleSheet("""
+                    font-size: 14px;
+                    font-weight: bold;
+                    color: #FF4444; /* Red for not running */
+                """)
                 self.current_spell_label.setText("None")
+                self.spell_icon.clear()
                 self.statusBar().showMessage("Automation stopped")
     
     def update_current_spell(self, spell_name):
-        """Update the current spell label."""
+        """Update the current spell label and icon."""
         self.current_spell_label.setText(spell_name)
+        
+        # Update the spell icon if available
+        if spell_name in self.spell_info:
+            icon_path = self.spell_info[spell_name]["icon_path"]
+            if os.path.exists(icon_path):
+                img = Image.open(icon_path)
+                img = img.resize((24, 24), Image.LANCZOS)
+                qimg = pil_to_qimage(img)
+                pixmap = QPixmap.fromImage(qimg)
+                self.spell_icon.setPixmap(pixmap)
+        else:
+            self.spell_icon.clear()
     
     def update_preview(self, qimg):
         """Update the preview label with a QImage."""
@@ -1123,10 +1780,27 @@ class AutoHekiliGUI(QMainWindow):
         self.live_preview.setPixmap(pixmap)
     
     def log(self, message):
-        """Add a message to the log."""
+        """Add a message to the log with WoW-style coloring."""
         timestamp = time.strftime("%H:%M:%S")
-        log_message = f"[{timestamp}] {message}"
-        self.log_text.append(log_message)
+        
+        # Apply color based on message content
+        if "error" in message.lower() or "warning" in message.lower():
+            # Red text for errors and warnings
+            formatted_message = f"<span style='color: #FF6060;'>[{timestamp}] {message}</span>"
+        elif "found" in message.lower() or "detected" in message.lower() or "match" in message.lower():
+            # Green text for successful detections
+            formatted_message = f"<span style='color: #40FF40;'>[{timestamp}] {message}</span>"
+        elif "special handling" in message.lower():
+            # Purple text for special handling messages
+            formatted_message = f"<span style='color: #FF80FF;'>[{timestamp}] {message}</span>"
+        elif "starting" in message.lower():
+            # Gold text for important status changes
+            formatted_message = f"<span style='color: #FFD100; font-weight: bold;'>[{timestamp}] {message}</span>"
+        else:
+            # Default color
+            formatted_message = f"<span style='color: #CCCCCC;'>[{timestamp}] {message}</span>"
+        
+        self.log_text.append(formatted_message)
         
         # Auto-scroll to bottom
         scrollbar = self.log_text.verticalScrollBar()
