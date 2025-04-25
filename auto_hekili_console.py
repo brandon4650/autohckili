@@ -63,8 +63,8 @@ class CaptureThread(QThread):
         # Create debug directory
         os.makedirs(DEBUG_DIR, exist_ok=True)
         
-        # Enhanced problem spell handling
-        self.problem_spells = ["storm_elemental", "ascendance", "earth_elemental", "fire_elemental"]
+        # Special handling for problematic spells
+        self.problem_spells = ["storm_elemental", "ascendance"]
         self.problem_spell_info = {s: info for s, info in spell_info.items() 
                                  if any(p.lower() in s.lower() for p in self.problem_spells)}
         
@@ -77,152 +77,21 @@ class CaptureThread(QThread):
                 img = Image.open(info["icon_path"])
                 img.save(os.path.join(DEBUG_DIR, f"reference_{spell_name}.png"))
         
-        # Prepare spell hashes with preprocessing
+        # Prepare spell hashes
         self.spell_hashes = {}
         for spell_name, info in spell_info.items():
             if os.path.exists(info["icon_path"]):
                 try:
                     img = Image.open(info["icon_path"])
-                    # Generate a standard hash and store it
                     self.spell_hashes[spell_name] = imagehash.phash(img)
-                    
-                    # Pre-process and save reference images for debugging
-                    if any(p.lower() in spell_name.lower() for p in self.problem_spells):
-                        img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-                        processed = self.preprocess_image(img_cv)
-                        cv2.imwrite(os.path.join(DEBUG_DIR, f"processed_{spell_name}.png"), processed)
                 except Exception as e:
                     self.update_signal.emit(f"Error loading image for {spell_name}: {e}")
-
-    def preprocess_image(self, image):
-        """Enhance spell icon recognition with preprocessing."""
-        # Convert to OpenCV format if it's a PIL image
-        if isinstance(image, Image.Image):
-            image_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-        else:
-            image_cv = image.copy()
-        
-        # Resize for consistency
-        image_cv = cv2.resize(image_cv, (64, 64))
-        
-        # Apply Gaussian blur to remove noise
-        image_cv = cv2.GaussianBlur(image_cv, (3, 3), 0)
-        
-        # Convert to grayscale
-        gray = cv2.cvtColor(image_cv, cv2.COLOR_BGR2GRAY)
-        
-        # Apply adaptive histogram equalization for better contrast
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
-        equalized = clahe.apply(gray)
-        
-        return equalized
-
-    def enhanced_capture(self, region):
-        """Improved screen capture with multiple attempts."""
-        best_screenshot = None
-        best_quality = 0
-        
-        # Try multiple captures to get the best quality
-        for attempt in range(3):
-            try:
-                # Capture with ImageGrab
-                screenshot = ImageGrab.grab(bbox=region)
-                
-                # Calculate image sharpness/quality
-                img_array = np.array(screenshot.convert('L'))
-                quality = cv2.Laplacian(img_array, cv2.CV_64F).var()
-                
-                # Keep the best quality screenshot
-                if quality > best_quality:
-                    best_quality = quality
-                    best_screenshot = screenshot
-                    
-                # If quality is good enough, no need for more attempts
-                if quality > 100:
-                    break
-                    
-            except Exception as e:
-                self.update_signal.emit(f"Capture attempt {attempt} failed: {e}")
-                time.sleep(0.05)
-        
-        return best_screenshot if best_screenshot else ImageGrab.grab(bbox=region)
-    
-    def multi_method_recognition(self, screenshot, last_spell):
-        """Use multiple recognition methods for better accuracy."""
-        # First try template matching for problem spells (high priority)
-        problem_spell_matched = False
-        best_match = None
-        max_confidence = 0
-        
-        # Process image for better recognition
-        processed_screenshot = self.preprocess_image(screenshot)
-        screenshot_cv = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
-        
-        # First check problem spells with template matching
-        for spell_name, info in self.problem_spell_info.items():
-            if os.path.exists(info["icon_path"]):
-                template = cv2.imread(info["icon_path"])
-                
-                if template is not None:
-                    # Try multiple scales for better matching
-                    for scale in [1.0, 0.95, 0.9, 0.85, 1.05]:
-                        scaled_template = cv2.resize(template, (0, 0), fx=scale, fy=scale)
-                        
-                        # Skip if template is larger than image
-                        if (scaled_template.shape[0] > screenshot_cv.shape[0] or 
-                            scaled_template.shape[1] > screenshot_cv.shape[1]):
-                            continue
-                        
-                        # Try multiple matching methods
-                        for method in [cv2.TM_CCOEFF_NORMED, cv2.TM_CCORR_NORMED]:
-                            try:
-                                result = cv2.matchTemplate(screenshot_cv, scaled_template, method)
-                                _, max_val, _, _ = cv2.minMaxLoc(result)
-                                
-                                # Keep track of best match
-                                if max_val > max_confidence:
-                                    max_confidence = max_val
-                                    best_match = spell_name
-                            except Exception:
-                                continue
-        
-        # If we found a problem spell with good confidence
-        if best_match and max_confidence >= 0.7:
-            return best_match, True
-            
-        # If no good template match for problem spells, try perceptual hash
-        current_hash = imagehash.phash(screenshot)
-        hash_best_match = None
-        min_diff = float('inf')
-        
-        for spell_name, phash in self.spell_hashes.items():
-            diff = phash - current_hash
-            # Use adaptive threshold based on spell type
-            threshold = 12 if any(p.lower() in spell_name.lower() for p in self.problem_spells) else self.threshold
-            
-            if diff < min_diff:
-                min_diff = diff
-                hash_best_match = spell_name
-        
-        # Determine final result with confidence check
-        if hash_best_match and min_diff < self.threshold:
-            # Favor consistent results by giving preference to last detected spell
-            if hash_best_match == last_spell and min_diff < self.threshold + 3:
-                return hash_best_match, True
-            return hash_best_match, min_diff < self.threshold
-        
-        # Fall back to best template match if hash didn't work well
-        if best_match and max_confidence >= 0.6:
-            return best_match, True
-            
-        return None, False
     
     def run(self):
         """Main thread loop for capture and comparison."""
         self.running = True
         capture_count = 0
         last_spell = None
-        consecutive_matches = 0
         
         while not self.stop_requested:
             # Check for F3 key to toggle automation
@@ -234,10 +103,10 @@ class CaptureThread(QThread):
             
             if self.active:
                 try:
-                    # Capture the screen region with enhanced method
+                    # Capture the screen region
                     left, top, width, height = self.box_position
                     region = (left, top, left + width, top + height)
-                    screenshot = self.enhanced_capture(region)
+                    screenshot = ImageGrab.grab(bbox=region)
                     
                     # Update UI with current screenshot (every 10 frames)
                     if capture_count % 10 == 0:
@@ -248,37 +117,77 @@ class CaptureThread(QThread):
                     if capture_count % 200 == 0:
                         screenshot.save(os.path.join(DEBUG_DIR, f"capture_{capture_count}.png"))
                     
-                    # Use multi-method recognition for better reliability
-                    best_match, is_confident = self.multi_method_recognition(screenshot, last_spell)
-                    
-                    if best_match and is_confident:
-                        # Track consecutive matches of the same spell
-                        if best_match == last_spell:
-                            consecutive_matches += 1
-                        else:
-                            consecutive_matches = 1
-                            self.update_signal.emit(f"Detected: {best_match}")
-                            screenshot.save(os.path.join(DEBUG_DIR, f"detected_{best_match}_{capture_count}.png"))
-                            last_spell = best_match
-                            self.spell_signal.emit(best_match)
+                    # First try template matching for problematic spells
+                    problem_spell_matched = False
+                    for spell_name, info in self.problem_spell_info.items():
+                        # Convert to CV2 format
+                        screenshot_cv = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+                        template = cv2.imread(info["icon_path"])
                         
-                        # Press key if we're confident (more consecutive matches = more confidence)
-                        required_matches = 1  # Can be increased for better reliability
-                        if consecutive_matches >= required_matches:
+                        if template is not None:
+                            # Use template matching with multiple scales for better accuracy
+                            max_val_overall = 0
+                            for scale in [1.0, 0.95, 0.9]:
+                                scaled_template = cv2.resize(template, (0, 0), fx=scale, fy=scale)
+                                if scaled_template.shape[0] <= screenshot_cv.shape[0] and scaled_template.shape[1] <= screenshot_cv.shape[1]:
+                                    result = cv2.matchTemplate(screenshot_cv, scaled_template, cv2.TM_CCOEFF_NORMED)
+                                    _, max_val, _, _ = cv2.minMaxLoc(result)
+                                    max_val_overall = max(max_val_overall, max_val)
+                            
+                            # If strong match found (threshold can be adjusted)
+                            if max_val_overall >= 0.7:
+                                # Save this detection
+                                if spell_name != last_spell:
+                                    self.update_signal.emit(f"Template matching found: {spell_name} (confidence: {max_val_overall:.2f})")
+                                    screenshot.save(os.path.join(DEBUG_DIR, f"detected_{spell_name}_{capture_count}.png"))
+                                    last_spell = spell_name
+                                    self.spell_signal.emit(spell_name)
+                                
+                                # Press the key
+                                key = info["key"]
+                                if key:
+                                    self.press_key_combination(key)
+                                    time.sleep(0.1)  # Small delay to prevent key spamming
+                                
+                                problem_spell_matched = True
+                                break
+                    
+                    # If no problem spell was found, use the regular phash method
+                    if not problem_spell_matched:
+                        # Compare with spell icons
+                        current_hash = imagehash.phash(screenshot)
+                        best_match = None
+                        min_diff = float('inf')
+                        
+                        for spell_name, phash in self.spell_hashes.items():
+                            diff = phash - current_hash
+                            # Use lower threshold for problem spells
+                            if any(p.lower() in spell_name.lower() for p in self.problem_spells):
+                                if diff < min_diff and diff < 12:  # Lower threshold for problem spells
+                                    min_diff = diff
+                                    best_match = spell_name
+                            elif diff < min_diff:
+                                min_diff = diff
+                                best_match = spell_name
+                        
+                        # If a match is found and it's close enough
+                        is_problem_spell = best_match and any(p.lower() in best_match.lower() for p in self.problem_spells)
+                        threshold = 12 if is_problem_spell else self.threshold
+                        
+                        if best_match and min_diff < threshold:
+                            # Only log when spell changes
+                            if best_match != last_spell:
+                                self.update_signal.emit(f"Hash matching found: {best_match} (diff: {min_diff})")
+                                last_spell = best_match
+                                self.spell_signal.emit(best_match)
+                            
                             key = self.spell_info[best_match]["key"]
                             if key:
                                 self.press_key_combination(key)
-                                # Adaptive delay based on consecutive matches
-                                time.sleep(min(0.05 + (consecutive_matches * 0.01), 0.15))
-                    else:
-                        # Gradually reduce confidence when no match is found
-                        consecutive_matches = max(0, consecutive_matches - 1)
+                                time.sleep(0.1)  # Small delay to prevent key spamming
                     
                     capture_count += 1
-                    
-                    # Adaptive sleep time - faster when we have consistent detections
-                    sleep_time = 0.03 if consecutive_matches > 2 else 0.05
-                    time.sleep(sleep_time)
+                    time.sleep(0.05)  # Small delay between captures
                 
                 except Exception as e:
                     self.update_signal.emit(f"Error in capture and compare: {e}")
@@ -287,7 +196,7 @@ class CaptureThread(QThread):
                 time.sleep(0.1)
         
         self.running = False
-        
+    
     def stop(self):
         """Stop the thread."""
         self.stop_requested = True
@@ -484,37 +393,17 @@ class AutoHekiliGUI(QMainWindow):
         
         self.setPalette(wow_palette)
         
-        # Apply WoW-style stylesheet with aggressive background color enforcement
+        # Apply WoW-style stylesheet
         self.setStyleSheet("""
-            /* Force dark background on ALL widget types */
-            QWidget, QMainWindow, QDialog, QFrame, QLabel, QToolTip, QMenuBar, QMenu, QAction, 
-            QTabWidget, QTabBar, QDockWidget, QToolBar, QStatusBar, QAbstractScrollArea, 
-            QScrollArea, QAbstractItemView, QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, 
-            QFontComboBox, QToolBox, QToolButton, QCheckBox, QRadioButton, QSpinBox, QDoubleSpinBox, 
-            QGroupBox, QSplitter, QSplitterHandle, QPushButton, QCalendarWidget, QListView, 
-            QTreeView, QTableView, QTableWidget, QListWidget, QTreeWidget, QProgressBar,
-            QHeaderView, QMdiArea, QMdiSubWindow, QTableCornerButton, QSizeGrip, QLCDNumber, 
-            QStackedWidget, QToolBar, QKeySequenceEdit, QDateEdit, QDateTimeEdit, QDial, 
-            QCompleter, QSizeGrip, QAbstractButton, QWizard, QWizardPage, QScrollBar, QSlider {
-                background-color: #0F1929;
+            QMainWindow {
+                background-color: #0F1929; /* Dark blue background */
             }
             
-            /* Main window background */
-            QMainWindow, QMainWindow::separator {
+            QWidget {
                 background-color: #0F1929;
+                color: #FFD100;
             }
             
-            /* All layouts - needs to be applied to children since layouts themselves don't have backgrounds */
-            QVBoxLayout > *, QHBoxLayout > *, QGridLayout > *, QFormLayout > * {
-                background-color: #0F1929;
-            }
-            
-            /* Containers and their children */
-            QScrollArea > QWidget, QScrollArea > QWidget > QWidget, QTabWidget > QWidget {
-                background-color: #0F1929;
-            }
-            
-            /* Group box specific (often problematic) */
             QGroupBox {
                 border: 1px solid #D4AF37; /* Gold border */
                 border-radius: 5px;
@@ -522,7 +411,6 @@ class AutoHekiliGUI(QMainWindow):
                 font-weight: bold;
                 font-size: 14px;
                 padding: 8px;
-                background-color: #0F1929;
             }
             
             QGroupBox::title {
@@ -530,15 +418,31 @@ class AutoHekiliGUI(QMainWindow):
                 subcontrol-position: top center;
                 padding: 0 10px;
                 color: #FFD100; /* Gold text */
-                background-color: #0F1929;
+                background-color: #0F1929; /* Match the dark background */
             }
             
-            /* Tab specific styling */
+            QPushButton {
+                background-color: #344E7F; /* WoW blue button */
+                border: 1px solid #D4AF37; /* Gold border */
+                border-radius: 3px;
+                padding: 8px;
+                font-weight: bold;
+                min-height: 24px;
+                color: white;
+            }
+            
+            QPushButton:hover {
+                background-color: #4A6EA5; /* Lighter blue when hovering */
+            }
+            
+            QPushButton:pressed {
+                background-color: #263A5E; /* Darker blue when pressed */
+            }
+            
             QTabWidget::pane {
                 border: 1px solid #D4AF37; /* Gold border */
                 border-radius: 3px;
                 top: -1px;
-                background-color: #0F1929;
             }
             
             QTabBar::tab {
@@ -563,26 +467,6 @@ class AutoHekiliGUI(QMainWindow):
                 margin-top: 2px;
             }
             
-            /* Buttons */
-            QPushButton {
-                background-color: #344E7F; /* WoW blue button */
-                border: 1px solid #D4AF37; /* Gold border */
-                border-radius: 3px;
-                padding: 8px;
-                font-weight: bold;
-                min-height: 24px;
-                color: white;
-            }
-            
-            QPushButton:hover {
-                background-color: #4A6EA5; /* Lighter blue when hovering */
-            }
-            
-            QPushButton:pressed {
-                background-color: #263A5E; /* Darker blue when pressed */
-            }
-            
-            /* Input fields */
             QLineEdit, QComboBox {
                 background-color: #19294A; /* Darker blue for input fields */
                 border: 1px solid #344E7F; /* Blue border */
@@ -603,19 +487,15 @@ class AutoHekiliGUI(QMainWindow):
                 selection-background-color: #4A6EA5;
             }
             
-            /* Labels - make background transparent to adapt to parent */
             QLabel {
                 color: #FFD100; /* Gold text */
                 font-weight: bold;
                 padding: 2px;
-                background-color: transparent;
             }
             
-            /* Scroll bars */
             QScrollArea {
                 border: 1px solid #344E7F;
                 border-radius: 3px;
-                background-color: #0F1929;
             }
             
             QScrollBar:vertical {
@@ -653,7 +533,6 @@ class AutoHekiliGUI(QMainWindow):
                 background: #FFD100; /* Gold arrows */
             }
             
-            /* Slider */
             QSlider::groove:horizontal {
                 border: 1px solid #344E7F;
                 background: #19294A;
@@ -669,7 +548,6 @@ class AutoHekiliGUI(QMainWindow):
                 border-radius: 5px;
             }
             
-            /* Status bar */
             QStatusBar {
                 background-color: #19294A;
                 color: #FFD100;
@@ -677,211 +555,58 @@ class AutoHekiliGUI(QMainWindow):
                 border-top: 1px solid #D4AF37;
             }
         """)
-        
-        # Force update for all widgets
-        for widget in self.findChildren(QWidget):
-            widget.setAutoFillBackground(True)
-            widget.setBackgroundRole(QPalette.Window)
-            widget.update()
     
     def init_setup_tab(self):
-        """Initialize the setup tab with WoW-style interface."""
+        """Initialize the setup tab."""
         layout = QVBoxLayout(self.setup_tab)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(15)
         
         # Introduction
         intro_box = QGroupBox("Welcome to AUTO_Hekili")
-        intro_box.setStyleSheet("""
-            QGroupBox {
-                background-color: #192742;
-                border: 2px solid #D4AF37;
-                border-radius: 8px;
-            }
-        """)
         intro_layout = QVBoxLayout()
-        
         intro_text = QLabel(
-            "<p style='font-size: 13px; line-height: 150%;'>"
-            "This application automates spell casting based on <b>Hekili addon</b> recommendations in World of Warcraft.<br><br>"
-            "<span style='color: #FF6060; font-weight: bold;'>WARNING:</span> Using automation tools may violate World of Warcraft's Terms of Service.<br>"
-            "Use at your own risk!</p>"
+            "This application will automate spell casting based on Hekili addon recommendations.\n\n"
+            "WARNING: Using automation tools may violate World of Warcraft's Terms of Service.\n"
+            "Use at your own risk!"
         )
-        intro_text.setTextFormat(Qt.RichText)
         intro_text.setWordWrap(True)
         intro_layout.addWidget(intro_text)
-        
-        # Add requirements info
-        requirements = QLabel(
-            "<p style='font-size: 12px;'><b>Requirements:</b><br>"
-            "• <a href='https://www.curseforge.com/wow/addons/hekili'>Hekili Addon</a> installed in WoW<br>"
-            "• Hekili configured to show a single icon recommendation<br>"
-            "• WoW running in Windowed or Windowed (Fullscreen) mode</p>"
-        )
-        requirements.setTextFormat(Qt.RichText)
-        requirements.setWordWrap(True)
-        requirements.setOpenExternalLinks(True)
-        requirements.setStyleSheet("color: #BBBBBB;")
-        intro_layout.addWidget(requirements)
-        
         intro_box.setLayout(intro_layout)
         layout.addWidget(intro_box)
         
-        # Class and spec selection with WoW styling
-        class_box = QGroupBox("Step 1: Select Class & Specialization")
-        class_box.setStyleSheet("""
-            QGroupBox {
-                background-color: #192742;
-                border: 2px solid #D4AF37;
-                border-radius: 8px;
-            }
-        """)
-        class_layout = QVBoxLayout()
-        
-        class_desc = QLabel("Select your character's class and specialization from the dropdown below.")
-        class_desc.setStyleSheet("color: #BBBBBB;")
-        class_layout.addWidget(class_desc)
-        
-        class_combo_layout = QHBoxLayout()
-        class_combo_layout.addWidget(QLabel("Class/Spec:"))
+        # Class and spec selection
+        class_box = QGroupBox("Class & Specialization")
+        class_layout = QFormLayout()
         
         self.class_combo = QComboBox()
         self.class_combo.addItems(self.get_available_classes_specs())
-        self.class_combo.setStyleSheet("""
-            QComboBox {
-                background-color: #19294A;
-                border: 1px solid #344E7F;
-                border-radius: 3px;
-                padding: 5px;
-                color: #FFD100;
-                font-weight: bold;
-                selection-background-color: #4A6EA5;
-                min-width: 200px;
-            }
-            QComboBox::drop-down {
-                border: 0px;
-            }
-            QComboBox::down-arrow {
-                image: url(dropdown_arrow.png);
-                width: 12px;
-                height: 12px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #19294A;
-                border: 1px solid #344E7F;
-                selection-background-color: #4A6EA5;
-                color: #FFD100;
-            }
-        """)
-        
         if "Class" in self.config and self.config["Class"]:
             idx = self.class_combo.findText(self.config["Class"])
             if idx >= 0:
                 self.class_combo.setCurrentIndex(idx)
         
-        class_combo_layout.addWidget(self.class_combo)
-        class_combo_layout.addStretch()
-        class_layout.addLayout(class_combo_layout)
-        
+        class_layout.addRow("Select Class/Spec:", self.class_combo)
         class_box.setLayout(class_layout)
         layout.addWidget(class_box)
         
-        # Screen region selection with WoW styling
-        region_box = QGroupBox("Step 2: Select Hekili Spellbox Region")
-        region_box.setStyleSheet("""
-            QGroupBox {
-                background-color: #192742;
-                border: 2px solid #D4AF37;
-                border-radius: 8px;
-            }
-        """)
-        region_layout = QVBoxLayout()
-        
-        region_desc = QLabel(
-            "Select the screen region where Hekili displays its primary spell recommendation icon.<br>"
-            "<b>Tip:</b> Make sure to capture only the primary icon, not the entire action bar."
-        )
-        region_desc.setTextFormat(Qt.RichText)
-        region_desc.setStyleSheet("color: #BBBBBB;")
-        region_desc.setWordWrap(True)
-        region_layout.addWidget(region_desc)
+        # Screen region selection
+        region_box = QGroupBox("Hekili Spellbox Region")
+        region_layout = QFormLayout()
         
         region_btn_layout = QHBoxLayout()
-        region_btn_layout.addWidget(QLabel("Selected Region:"))
-        
         self.region_label = QLabel("Not selected")
-        self.region_label.setStyleSheet("""
-            background-color: #19294A;
-            border: 1px solid #344E7F;
-            border-radius: 3px;
-            padding: 5px;
-            color: #FFD100;
-            min-width: 120px;
-        """)
-        region_btn_layout.addWidget(self.region_label)
-        
         self.select_region_btn = QPushButton("Select Region")
-        self.select_region_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #344E7F;
-                color: white;
-                font-weight: bold;
-                border: 1px solid #D4AF37;
-                border-radius: 3px;
-                padding: 8px;
-                min-width: 120px;
-            }
-            QPushButton:hover {
-                background-color: #4A6EA5;
-            }
-        """)
         self.select_region_btn.clicked.connect(self.select_region)
+        region_btn_layout.addWidget(self.region_label)
         region_btn_layout.addWidget(self.select_region_btn)
-        region_btn_layout.addStretch()
-        region_layout.addLayout(region_btn_layout)
         
+        region_layout.addRow("Spellbox Region:", region_btn_layout)
         region_box.setLayout(region_layout)
         layout.addWidget(region_box)
         
-        # Apply setup with WoW styling
-        apply_box = QGroupBox("Step 3: Apply Setup")
-        apply_box.setStyleSheet("""
-            QGroupBox {
-                background-color: #192742;
-                border: 2px solid #D4AF37;
-                border-radius: 8px;
-            }
-        """)
-        apply_layout = QVBoxLayout()
-        
-        apply_desc = QLabel(
-            "Once you've selected your class/spec and the Hekili icon region, click Apply Setup to proceed to keybindings."
-        )
-        apply_desc.setStyleSheet("color: #BBBBBB;")
-        apply_desc.setWordWrap(True)
-        apply_layout.addWidget(apply_desc)
-        
-        self.apply_btn = QPushButton("APPLY SETUP")
-        self.apply_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #1F6032;
-                color: white;
-                font-weight: bold;
-                border: 2px solid #D4AF37;
-                border-radius: 5px;
-                padding: 10px;
-                font-size: 13px;
-                min-height: 30px;
-            }
-            QPushButton:hover {
-                background-color: #2A8045;
-            }
-        """)
+        # Apply button
+        self.apply_btn = QPushButton("Apply Setup")
         self.apply_btn.clicked.connect(self.apply_setup)
-        
-        apply_layout.addWidget(self.apply_btn, alignment=Qt.AlignCenter)
-        apply_box.setLayout(apply_layout)
-        layout.addWidget(apply_box)
+        layout.addWidget(self.apply_btn)
         
         # Add spacer
         layout.addStretch()
@@ -1009,262 +734,85 @@ class AutoHekiliGUI(QMainWindow):
         layout.addWidget(hints_label)
     
     def init_debug_tab(self):
-        """Initialize the debug tab with WoW-style interface."""
+        """Initialize the debug tab."""
         layout = QVBoxLayout(self.debug_tab)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(10)
         
-        # Split the debug tab into two parts with WoW-style splitter
+        # Split the debug tab into two parts
         splitter = QSplitter(Qt.Vertical)
-        splitter.setHandleWidth(8)
-        splitter.setStyleSheet("""
-            QSplitter::handle {
-                background-color: #344E7F;
-                border: 1px solid #D4AF37;
-            }
-        """)
         
         # Top part - testing controls
         top_widget = QWidget()
-        top_widget.setStyleSheet("background-color: #0F1929;")
         top_layout = QVBoxLayout(top_widget)
-        top_layout.setContentsMargins(0, 0, 0, 0)
         
         # Problem spell testing
-        problem_box = QGroupBox("Test Recognition for Problematic Spells")
-        problem_box.setStyleSheet("""
-            QGroupBox {
-                background-color: #192742;
-                border: 2px solid #D4AF37;
-                border-radius: 8px;
-            }
-        """)
+        problem_box = QGroupBox("Test Problematic Spells")
         problem_layout = QVBoxLayout()
         
         # Instructions
         test_instructions = QLabel(
-            "Test recognition for problematic spells that might need special handling.<br>"
-            "<b>Step 1:</b> Make sure Hekili is showing the spell you want to test in-game.<br>"
-            "<b>Step 2:</b> Click the test button for that spell to check if it's recognized properly."
+            "Test recognition for problematic spells like Storm Elemental and Ascendance.\n"
+            "Make sure Hekili is showing the spell you want to test before clicking the test button."
         )
-        test_instructions.setTextFormat(Qt.RichText)
         test_instructions.setWordWrap(True)
-        test_instructions.setStyleSheet("color: #BBBBBB; padding: 5px;")
         problem_layout.addWidget(test_instructions)
         
-        # Test buttons with spell icons
+        # Test buttons for specific problem spells
         btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(15)
-        
-        # Storm Elemental button
-        storm_btn_container = QWidget()
-        storm_btn_layout = QVBoxLayout(storm_btn_container)
-        storm_btn_layout.setContentsMargins(5, 5, 5, 5)
-        
         self.test_storm_btn = QPushButton("Test Storm Elemental")
-        self.test_storm_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #344E7F;
-                color: white;
-                font-weight: bold;
-                border: 1px solid #D4AF37;
-                border-radius: 3px;
-                padding: 8px;
-            }
-            QPushButton:hover {
-                background-color: #4A6EA5;
-            }
-        """)
         self.test_storm_btn.clicked.connect(lambda: self.test_spell_recognition("storm_elemental"))
-        storm_btn_layout.addWidget(self.test_storm_btn)
-        
-        # Storm Elemental description
-        storm_desc = QLabel("Tests if Storm Elemental icon is properly detected")
-        storm_desc.setStyleSheet("color: #BBBBBB; font-style: italic; font-size: 11px;")
-        storm_btn_layout.addWidget(storm_desc)
-        
-        btn_layout.addWidget(storm_btn_container)
-        
-        # Ascendance button
-        asc_btn_container = QWidget()
-        asc_btn_layout = QVBoxLayout(asc_btn_container)
-        asc_btn_layout.setContentsMargins(5, 5, 5, 5)
-        
         self.test_ascendance_btn = QPushButton("Test Ascendance")
-        self.test_ascendance_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #344E7F;
-                color: white;
-                font-weight: bold;
-                border: 1px solid #D4AF37;
-                border-radius: 3px;
-                padding: 8px;
-            }
-            QPushButton:hover {
-                background-color: #4A6EA5;
-            }
-        """)
         self.test_ascendance_btn.clicked.connect(lambda: self.test_spell_recognition("ascendance"))
-        asc_btn_layout.addWidget(self.test_ascendance_btn)
-        
-        # Ascendance description
-        asc_desc = QLabel("Tests if Ascendance icon is properly detected")
-        asc_desc.setStyleSheet("color: #BBBBBB; font-style: italic; font-size: 11px;")
-        asc_btn_layout.addWidget(asc_desc)
-        
-        btn_layout.addWidget(asc_btn_container)
+        btn_layout.addWidget(self.test_storm_btn)
+        btn_layout.addWidget(self.test_ascendance_btn)
         problem_layout.addLayout(btn_layout)
         
-        # Threshold adjustment with WoW styling
-        threshold_box = QGroupBox("Recognition Settings")
-        threshold_box.setStyleSheet("""
-            QGroupBox {
-                background-color: #0F1929;
-                border: 1px solid #344E7F;
-                border-radius: 5px;
-                margin-top: 15px;
-            }
-        """)
-        threshold_layout = QVBoxLayout()
-        
-        threshold_desc = QLabel("Adjust the threshold for spell recognition. Lower values make recognition more sensitive but may cause false positives.")
-        threshold_desc.setWordWrap(True)
-        threshold_desc.setStyleSheet("color: #BBBBBB; font-style: italic;")
-        threshold_layout.addWidget(threshold_desc)
-        
-        slider_layout = QHBoxLayout()
-        slider_layout.addWidget(QLabel("Threshold:"))
-        
+        # Threshold adjustment
+        threshold_layout = QHBoxLayout()
+        threshold_layout.addWidget(QLabel("Recognition Threshold:"))
         self.threshold_slider = QSlider(Qt.Horizontal)
         self.threshold_slider.setMinimum(5)
         self.threshold_slider.setMaximum(25)
         self.threshold_slider.setValue(15)
         self.threshold_slider.setTickPosition(QSlider.TicksBelow)
         self.threshold_slider.setTickInterval(5)
-        self.threshold_slider.setStyleSheet("""
-            QSlider::groove:horizontal {
-                background: #19294A;
-                height: 8px;
-                border-radius: 4px;
-            }
-            QSlider::handle:horizontal {
-                background: #D4AF37;
-                border: 1px solid #D4AF37;
-                width: 18px;
-                margin: -2px 0;
-                border-radius: 5px;
-            }
-        """)
-        self.threshold_slider.valueChanged.connect(self.update_threshold_label)
-        slider_layout.addWidget(self.threshold_slider)
-        
         self.threshold_label = QLabel("15")
-        self.threshold_label.setStyleSheet("color: #FFD100; font-weight: bold; min-width: 30px;")
-        slider_layout.addWidget(self.threshold_label)
+        self.threshold_slider.valueChanged.connect(self.update_threshold_label)
+        threshold_layout.addWidget(self.threshold_slider)
+        threshold_layout.addWidget(self.threshold_label)
+        problem_layout.addLayout(threshold_layout)
         
-        threshold_layout.addLayout(slider_layout)
-        threshold_box.setLayout(threshold_layout)
-        problem_layout.addWidget(threshold_box)
-        
-        # Capture preview with WoW styling
-        capture_box = QGroupBox("Current Capture")
-        capture_box.setStyleSheet("""
-            QGroupBox {
-                background-color: #0F1929;
-                border: 1px solid #344E7F;
-                border-radius: 5px;
-                margin-top: 15px;
-            }
-        """)
-        capture_layout = QVBoxLayout()
-        
-        preview_container = QWidget()
-        preview_layout = QHBoxLayout(preview_container)
-        preview_layout.setContentsMargins(0, 0, 0, 0)
+        # Capture preview
+        capture_layout = QHBoxLayout()
+        capture_layout.addWidget(QLabel("Current Capture:"))
+        self.refresh_capture_btn = QPushButton("Refresh")
+        self.refresh_capture_btn.clicked.connect(self.refresh_capture)
+        capture_layout.addWidget(self.refresh_capture_btn)
+        problem_layout.addLayout(capture_layout)
         
         self.preview_label = QLabel()
         self.preview_label.setFixedSize(100, 100)
         self.preview_label.setAlignment(Qt.AlignCenter)
-        self.preview_label.setStyleSheet("""
-            border: 2px solid #344E7F;
-            background-color: #0A101E;
-        """)
-        preview_layout.addWidget(self.preview_label, alignment=Qt.AlignCenter)
-        
-        self.refresh_capture_btn = QPushButton("Refresh Capture")
-        self.refresh_capture_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #344E7F;
-                color: white;
-                font-weight: bold;
-                border: 1px solid #D4AF37;
-                border-radius: 3px;
-                padding: 8px;
-            }
-        """)
-        self.refresh_capture_btn.clicked.connect(self.refresh_capture)
-        preview_layout.addWidget(self.refresh_capture_btn) [[4]](https://poe.com/citation?message_id=381399385216&citation=4)
-        
-        capture_layout.addWidget(preview_container, alignment=Qt.AlignCenter)
-        capture_box.setLayout(capture_layout)
-        problem_layout.addWidget(capture_box)
+        self.preview_label.setFrameShape(QFrame.Box)
+        problem_layout.addWidget(self.preview_label, alignment=Qt.AlignHCenter)
         
         problem_box.setLayout(problem_layout)
         top_layout.addWidget(problem_box)
         
         splitter.addWidget(top_widget)
         
-        # Bottom part - debug log with WoW styling
+        # Bottom part - debug log
         log_widget = QWidget()
-        log_widget.setStyleSheet("background-color: #0F1929;") [[4]](https://poe.com/citation?message_id=381399385216&citation=4)
         log_layout = QVBoxLayout(log_widget)
-        log_layout.setContentsMargins(0, 0, 0, 0)
         
-        log_box = QGroupBox("Debug Log")
-        log_box.setStyleSheet("""
-            QGroupBox {
-                background-color: #192742;
-                border: 2px solid #D4AF37;
-                border-radius: 8px;
-            }
-        """)
-        log_inner_layout = QVBoxLayout()
-        
+        log_layout.addWidget(QLabel("Debug Log:"))
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setStyleSheet("""
-            QTextEdit {
-                background-color: #0A101E;
-                border: 1px solid #344E7F;
-                border-radius: 3px;
-                color: #CCCCCC;
-                selection-background-color: #4A6EA5;
-                font-family: Consolas, Courier, monospace;
-            }
-        """)
-        log_inner_layout.addWidget(self.log_text)
-        
-        # Add clear log button
-        self.clear_log_btn = QPushButton("Clear Log")
-        self.clear_log_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #344E7F;
-                color: white;
-                border: 1px solid #D4AF37;
-                border-radius: 3px;
-                padding: 5px;
-            }
-        """)
-        self.clear_log_btn.clicked.connect(self.log_text.clear)
-        log_inner_layout.addWidget(self.clear_log_btn, alignment=Qt.AlignRight)
-        
-        log_box.setLayout(log_inner_layout)
-        log_layout.addWidget(log_box)
+        log_layout.addWidget(self.log_text)
         
         splitter.addWidget(log_widget)
         
         # Set initial sizes
-        splitter.setSizes([350, 350]) [[2]](https://poe.com/citation?message_id=381399385216&citation=2)
+        splitter.setSizes([300, 400])
         
         layout.addWidget(splitter)
     
@@ -1592,93 +1140,93 @@ class AutoHekiliGUI(QMainWindow):
         return spells
     
     def populate_keybindings(self):
-        """Populate the keybinding grid with current spell info and WoW styling."""
-        # Clear existing widgets (removing everything except header row)
-        for i in reversed(range(1, self.keybind_layout.rowCount())):
-            for j in range(self.keybind_layout.columnCount()):
-                widget = self.keybind_layout.itemAtPosition(i, j)
-                if widget and widget.widget():
-                    widget.widget().deleteLater()
-        
-        self.keybind_inputs = {}
-        
-        # Get existing keybindings if available
-        if "keybindings" in self.config:
-            for spell_name, key in self.config["keybindings"].items():
-                if spell_name in self.spell_info:
-                    self.spell_info[spell_name]["key"] = key
-        
-        # Create inputs for each spell
-        row = 1  # Start after header row
-        for spell_name in sorted(self.spell_info.keys()):
-            # Create spell name container with icon
-            spell_container = QWidget()
-            
-            # Set alternating row background colors
-            if row % 2 == 0:
-                spell_container.setStyleSheet("background-color: #192742;")
-            else:
-                spell_container.setStyleSheet("background-color: #0F1929;")
-            
-            spell_layout = QHBoxLayout(spell_container)
-            spell_layout.setContentsMargins(5, 5, 5, 5)
-            spell_layout.setSpacing(10)
-            
-            # Add spell icon if available
-            icon_path = self.spell_info[spell_name]["icon_path"]
-            if os.path.exists(icon_path):
-                icon_label = QLabel()
-                img = Image.open(icon_path)
-                img = img.resize((24, 24), Image.LANCZOS)
-                qimg = pil_to_qimage(img)
-                pixmap = QPixmap.fromImage(qimg)
-                icon_label.setPixmap(pixmap)
-                spell_layout.addWidget(icon_label)
-            
-            # Add spell name label
-            name_label = QLabel(spell_name)
-            name_label.setStyleSheet("color: #FFD100; font-weight: bold;")
-            spell_layout.addWidget(name_label)
-            spell_layout.addStretch()
-            
-            self.keybind_layout.addWidget(spell_container, row, 0)
-            
-            # Create input container
-            input_container = QWidget()
-            if row % 2 == 0:
-                input_container.setStyleSheet("background-color: #192742;")
-            else:
-                input_container.setStyleSheet("background-color: #0F1929;")
-            
-            input_layout = QHBoxLayout(input_container)
-            input_layout.setContentsMargins(5, 5, 5, 5)
-            
-            # Add input field with WoW styling
-            key_input = QLineEdit()
-            key_input.setText(self.spell_info[spell_name]["key"])
-            key_input.setStyleSheet("""
-                QLineEdit {
-                    background-color: #19294A;
-                    border: 1px solid #344E7F;
-                    border-radius: 3px;
-                    padding: 5px;
-                    color: #FFD100;
-                    font-weight: bold;
-                    selection-background-color: #4A6EA5;
-                    max-width: 150px;
-                }
-            """)
-            key_input.setAlignment(Qt.AlignCenter)
-            input_layout.addWidget(key_input, alignment=Qt.AlignCenter)
-            
-            self.keybind_inputs[spell_name] = key_input
-            self.keybind_layout.addWidget(input_container, row, 1)
-            
-            row += 1
-        
-        # Set column stretches
-        self.keybind_layout.setColumnStretch(0, 3)  # Spell name gets more space
-        self.keybind_layout.setColumnStretch(1, 1)  # Key binding gets less space
+           """Populate the keybinding grid with current spell info and WoW styling."""
+           # Clear existing widgets (removing everything except header row)
+           for i in reversed(range(1, self.keybind_layout.rowCount())):
+               for j in range(self.keybind_layout.columnCount()):
+                   widget = self.keybind_layout.itemAtPosition(i, j)
+                   if widget and widget.widget():
+                       widget.widget().deleteLater()
+           
+           self.keybind_inputs = {}
+           
+           # Get existing keybindings if available
+           if "keybindings" in self.config:
+               for spell_name, key in self.config["keybindings"].items():
+                   if spell_name in self.spell_info:
+                       self.spell_info[spell_name]["key"] = key
+           
+           # Create inputs for each spell
+           row = 1  # Start after header row
+           for spell_name in sorted(self.spell_info.keys()):
+               # Create spell name container with icon
+               spell_container = QWidget()
+               
+               # Set alternating row background colors
+               if row % 2 == 0:
+                   spell_container.setStyleSheet("background-color: #192742;")
+               else:
+                   spell_container.setStyleSheet("background-color: #0F1929;")
+               
+               spell_layout = QHBoxLayout(spell_container)
+               spell_layout.setContentsMargins(5, 5, 5, 5)
+               spell_layout.setSpacing(10)
+               
+               # Add spell icon if available
+               icon_path = self.spell_info[spell_name]["icon_path"]
+               if os.path.exists(icon_path):
+                   icon_label = QLabel()
+                   img = Image.open(icon_path)
+                   img = img.resize((24, 24), Image.LANCZOS)
+                   qimg = pil_to_qimage(img)
+                   pixmap = QPixmap.fromImage(qimg)
+                   icon_label.setPixmap(pixmap)
+                   spell_layout.addWidget(icon_label)
+               
+               # Add spell name label
+               name_label = QLabel(spell_name)
+               name_label.setStyleSheet("color: #FFD100; font-weight: bold;")
+               spell_layout.addWidget(name_label)
+               spell_layout.addStretch()
+               
+               self.keybind_layout.addWidget(spell_container, row, 0)
+               
+               # Create input container
+               input_container = QWidget()
+               if row % 2 == 0:
+                   input_container.setStyleSheet("background-color: #192742;")
+               else:
+                   input_container.setStyleSheet("background-color: #0F1929;")
+               
+               input_layout = QHBoxLayout(input_container)
+               input_layout.setContentsMargins(5, 5, 5, 5)
+               
+               # Add input field with WoW styling
+               key_input = QLineEdit()
+               key_input.setText(self.spell_info[spell_name]["key"])
+               key_input.setStyleSheet("""
+                   QLineEdit {
+                       background-color: #19294A;
+                       border: 1px solid #344E7F;
+                       border-radius: 3px;
+                       padding: 5px;
+                       color: #FFD100;
+                       font-weight: bold;
+                       selection-background-color: #4A6EA5;
+                       max-width: 150px;
+                   }
+               """)
+               key_input.setAlignment(Qt.AlignCenter)
+               input_layout.addWidget(key_input, alignment=Qt.AlignCenter)
+               
+               self.keybind_inputs[spell_name] = key_input
+               self.keybind_layout.addWidget(input_container, row, 1)
+               
+               row += 1
+           
+           # Set column stretches
+           self.keybind_layout.setColumnStretch(0, 3)  # Spell name gets more space
+           self.keybind_layout.setColumnStretch(1, 1)  # Key binding gets less space
     
     def save_keybindings(self):
         """Save keybindings to configuration."""
@@ -1780,11 +1328,11 @@ class AutoHekiliGUI(QMainWindow):
         self.test_thread.start()
     
     def toggle_automation(self):
-        """Start or stop the automation with enhanced visual feedback."""
+        """Start or stop the automation."""
         if not self.capture_thread or not self.capture_thread.running:
             # Start automation
             if not self.box_position or not self.spell_info:
-                QMessageBox.warning(self, "Setup Error", "Please configure class, screen region, and keybindings first.")
+                QMessageBox.warning(self, "Error", "Please configure class, screen region, and keybindings first.")
                 return
             
             # Check if we have any keybindings configured
@@ -1795,7 +1343,7 @@ class AutoHekiliGUI(QMainWindow):
                     break
             
             if not has_keybindings:
-                QMessageBox.warning(self, "Setup Error", "No keybindings configured. Please set up keybindings first.")
+                QMessageBox.warning(self, "Error", "No keybindings configured. Please set up keybindings first.")
                 return
             
             # Log problem spells
@@ -1824,27 +1372,9 @@ class AutoHekiliGUI(QMainWindow):
             self.capture_thread.image_signal.connect(self.update_live_preview)
             self.capture_thread.start()
             
-            # Update UI with WoW styling for "running" state
-            self.start_stop_btn.setText("STOP AUTOMATION")
-            self.start_stop_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #722424; /* Red background for stop */
-                    color: white;
-                    font-weight: bold;
-                    font-size: 14px;
-                    border: 2px solid #D4AF37;
-                    border-radius: 5px;
-                }
-                QPushButton:hover {
-                    background-color: #9B3232;
-                }
-            """)
+            # Update UI
+            self.start_stop_btn.setText("Stop Automation")
             self.status_label.setText("Running")
-            self.status_label.setStyleSheet("""
-                font-size: 14px;
-                font-weight: bold;
-                color: #40FF40; /* Green for running */
-            """)
             self.statusBar().showMessage("Automation started")
         else:
             # Stop automation
@@ -1852,46 +1382,15 @@ class AutoHekiliGUI(QMainWindow):
                 self.capture_thread.stop()
                 self.log("Automation stopped")
                 
-                # Update UI with WoW styling for "stopped" state
-                self.start_stop_btn.setText("START AUTOMATION")
-                self.start_stop_btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: #1F6032; /* Green background for start */
-                        color: white;
-                        font-weight: bold;
-                        font-size: 14px;
-                        border: 2px solid #D4AF37;
-                        border-radius: 5px;
-                    }
-                    QPushButton:hover {
-                        background-color: #2A8045;
-                    }
-                """)
+                # Update UI
+                self.start_stop_btn.setText("Start Automation")
                 self.status_label.setText("Not Running")
-                self.status_label.setStyleSheet("""
-                    font-size: 14px;
-                    font-weight: bold;
-                    color: #FF4444; /* Red for not running */
-                """)
                 self.current_spell_label.setText("None")
-                self.spell_icon.clear()
                 self.statusBar().showMessage("Automation stopped")
     
     def update_current_spell(self, spell_name):
-        """Update the current spell label and icon."""
+        """Update the current spell label."""
         self.current_spell_label.setText(spell_name)
-        
-        # Update the spell icon if available
-        if spell_name in self.spell_info:
-            icon_path = self.spell_info[spell_name]["icon_path"]
-            if os.path.exists(icon_path):
-                img = Image.open(icon_path)
-                img = img.resize((24, 24), Image.LANCZOS)
-                qimg = pil_to_qimage(img)
-                pixmap = QPixmap.fromImage(qimg)
-                self.spell_icon.setPixmap(pixmap)
-        else:
-            self.spell_icon.clear()
     
     def update_preview(self, qimg):
         """Update the preview label with a QImage."""
@@ -1908,27 +1407,10 @@ class AutoHekiliGUI(QMainWindow):
         self.live_preview.setPixmap(pixmap)
     
     def log(self, message):
-        """Add a message to the log with WoW-style coloring."""
+        """Add a message to the log."""
         timestamp = time.strftime("%H:%M:%S")
-        
-        # Apply color based on message content
-        if "error" in message.lower() or "warning" in message.lower():
-            # Red text for errors and warnings
-            formatted_message = f"<span style='color: #FF6060;'>[{timestamp}] {message}</span>"
-        elif "found" in message.lower() or "detected" in message.lower() or "match" in message.lower():
-            # Green text for successful detections
-            formatted_message = f"<span style='color: #40FF40;'>[{timestamp}] {message}</span>"
-        elif "special handling" in message.lower():
-            # Purple text for special handling messages
-            formatted_message = f"<span style='color: #FF80FF;'>[{timestamp}] {message}</span>"
-        elif "starting" in message.lower():
-            # Gold text for important status changes
-            formatted_message = f"<span style='color: #FFD100; font-weight: bold;'>[{timestamp}] {message}</span>"
-        else:
-            # Default color
-            formatted_message = f"<span style='color: #CCCCCC;'>[{timestamp}] {message}</span>"
-        
-        self.log_text.append(formatted_message)
+        log_message = f"[{timestamp}] {message}"
+        self.log_text.append(log_message)
         
         # Auto-scroll to bottom
         scrollbar = self.log_text.verticalScrollBar()
