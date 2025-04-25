@@ -11,6 +11,13 @@ import keyboard
 import threading
 import re
 import sys
+import datetime
+import hashlib
+import platform
+import uuid
+import tempfile
+import webbrowser
+import mysql.connector
 from os import listdir
 from os.path import isfile, join
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, 
@@ -25,6 +32,19 @@ CONFIG_PATH = "config\\config.json"
 IMG_DIR = "img"
 SIMC_NOTES_DIR = "config\\Notes"
 DEBUG_DIR = "debug_captures"
+LICENSE_FILE = "config/license.json"
+
+# Function to generate hardware ID - added for license verification
+def generate_hardware_id():
+    """Generate a unique hardware ID for this system."""
+    system_info = [
+        platform.node(),
+        platform.machine(),
+        platform.processor(),
+        str(uuid.getnode())  # MAC address
+    ]
+    hw_string = ":".join(system_info)
+    return hashlib.sha256(hw_string.encode()).hexdigest()[:32]
 
 # Function to convert PIL Image to QImage
 def pil_to_qimage(pil_image):
@@ -313,6 +333,7 @@ class SpellTestThread(QThread):
 
 class AutoHekiliGUI(QMainWindow):
     def __init__(self):
+        # Add to existing __init__ method
         super().__init__()
         self.setWindowTitle("AUTO_Hekili")
         self.setGeometry(100, 100, 900, 700)
@@ -324,6 +345,9 @@ class AutoHekiliGUI(QMainWindow):
         self.capture_thread = None
         self.current_spell = None
         
+        # License tracking
+        self.last_expiry_notification_date = None
+        
         # Set dark theme
         self.set_wow_theme()
         
@@ -332,6 +356,99 @@ class AutoHekiliGUI(QMainWindow):
         
         # Load existing configuration if available
         self.load_existing_config()
+
+        # Validate license against database
+        self.validate_license_against_database()
+        
+        # Check license expiration
+        QTimer.singleShot(1000, self.check_license_expiration)
+    
+    def check_license_expiration(self):
+        """Check if license is about to expire and show notification if needed."""
+        try:
+            # License data should have been validated against database at startup
+            # We can just use the data already loaded in the config file
+            license_data = self.load_license_file()
+            if not license_data or "expiration_date" not in license_data:
+                return
+                    
+            # Parse expiration date and calculate days remaining
+            expiry_date = datetime.datetime.fromisoformat(license_data["expiration_date"])
+            now = datetime.datetime.now()
+            time_remaining = expiry_date - now
+            days_remaining = time_remaining.days
+            
+            # Check if we need to show notification (≤ 5 days remaining)
+            if 0 < days_remaining <= 5:
+                # Check if we already showed notification today
+                today = datetime.date.today()
+                if self.last_expiry_notification_date != today:
+                    self.show_expiration_warning(days_remaining)
+                    self.last_expiry_notification_date = today
+        except Exception as e:
+            print(f"Error checking license expiration: {e}")
+    
+    def show_expiration_warning(self, days_remaining):
+        """Show a warning that the license is about to expire."""
+        warning_dialog = QMessageBox(self)
+        warning_dialog.setWindowTitle("License Expiring Soon")
+        warning_dialog.setIcon(QMessageBox.Warning)
+        
+        # Create a custom layout for the message box
+        day_text = "day" if days_remaining == 1 else "days"
+        warning_dialog.setText(f"<h3>Your AUTO_Hekili license is expiring soon!</h3>")
+        warning_dialog.setInformativeText(
+            f"<p>You have <b style='color:#FFA500;'>{days_remaining} {day_text}</b> remaining on your current license.</p>"
+            f"<p>When your license expires, you will no longer be able to use AUTO_Hekili "
+            f"until you purchase a new license.</p>"
+            f"<p>Please visit the Account tab to purchase a new license.</p>"
+        )
+        
+        # Add buttons
+        warning_dialog.addButton("Remind Me Later", QMessageBox.RejectRole)
+        purchase_button = warning_dialog.addButton("Go to Account Tab", QMessageBox.AcceptRole)
+        warning_dialog.setDefaultButton(purchase_button)
+        
+        # Show the dialog
+        result = warning_dialog.exec_()
+        
+        # If user clicked "Go to Account Tab"
+        if warning_dialog.clickedButton() == purchase_button:
+            self.tab_widget.setCurrentWidget(self.user_tab)
+            # Highlight the purchase button
+            self.purchase_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #FFA500;
+                    color: white;
+                    font-weight: bold;
+                    font-size: 14px;
+                    border: 2px solid #FFD700;
+                    border-radius: 5px;
+                    min-height: 40px;
+                }
+                QPushButton:hover {
+                    background-color: #FF8C00;
+                }
+            """)
+            # Reset the style after 2 seconds
+            QTimer.singleShot(2000, self.reset_purchase_button_style)
+    
+    def reset_purchase_button_style(self):
+        """Reset the purchase button style after highlighting."""
+        self.purchase_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #1F6032;
+                color: white;
+                font-weight: bold;
+                font-size: 14px;
+                border: 2px solid #D4AF37;
+                border-radius: 5px;
+                min-height: 40px;
+            }
+            QPushButton:hover {
+                background-color: #2A8045;
+            }
+        """)
     
     def init_ui(self):
         """Initialize the UI."""
@@ -348,23 +465,396 @@ class AutoHekiliGUI(QMainWindow):
         self.config_tab = QWidget()
         self.debug_tab = QWidget()
         self.runner_tab = QWidget()
+        self.user_tab = QWidget()  # New user tab
         
         self.tab_widget.addTab(self.setup_tab, "Setup")
         self.tab_widget.addTab(self.config_tab, "Keybindings")
         self.tab_widget.addTab(self.debug_tab, "Debug")
         self.tab_widget.addTab(self.runner_tab, "Runner")
+        self.tab_widget.addTab(self.user_tab, "Account")  # Add the user tab
         
         # Initialize tab UIs
         self.init_setup_tab()
         self.init_config_tab()
         self.init_debug_tab()
         self.init_runner_tab()
+        self.init_user_tab()  # Initialize user tab
         
         # Set the main widget
         self.setCentralWidget(main_widget)
         
         # Status bar
         self.statusBar().showMessage("Ready")
+    
+    def init_user_tab(self):
+        """Initialize the user account tab with license information."""
+        layout = QVBoxLayout(self.user_tab)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(15)
+        
+        # License information panel
+        license_box = QGroupBox("License Information")
+        license_box.setStyleSheet("""
+            QGroupBox {
+                background-color: #192742;
+                border: 2px solid #D4AF37;
+                border-radius: 8px;
+            }
+        """)
+        license_layout = QGridLayout()
+        license_layout.setVerticalSpacing(12)
+        license_layout.setHorizontalSpacing(15)
+        
+        # Hardware ID
+        license_layout.addWidget(QLabel("Hardware ID:"), 0, 0)
+        self.hardware_id_label = QLabel(generate_hardware_id())
+        self.hardware_id_label.setStyleSheet("""
+            background-color: #0F1929;
+            border: 1px solid #344E7F;
+            border-radius: 3px;
+            padding: 8px;
+            font-family: monospace;
+            selection-background-color: #4A6EA5;
+        """)
+        self.hardware_id_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        license_layout.addWidget(self.hardware_id_label, 0, 1)
+        
+        # License Key
+        license_layout.addWidget(QLabel("License Key:"), 1, 0)
+        self.license_key_label = QLabel("Loading...")
+        self.license_key_label.setStyleSheet("""
+            background-color: #0F1929;
+            border: 1px solid #344E7F;
+            border-radius: 3px;
+            padding: 8px;
+            font-family: monospace;
+            selection-background-color: #4A6EA5;
+        """)
+        self.license_key_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        license_layout.addWidget(self.license_key_label, 1, 1)
+        
+        # Status
+        license_layout.addWidget(QLabel("Status:"), 2, 0)
+        self.license_status_label = QLabel("Loading...")
+        self.license_status_label.setStyleSheet("font-weight: bold;")
+        license_layout.addWidget(self.license_status_label, 2, 1)
+        
+        # Expiration
+        license_layout.addWidget(QLabel("Expires:"), 3, 0)
+        self.license_expiry_label = QLabel("Loading...")
+        license_layout.addWidget(self.license_expiry_label, 3, 1)
+        
+        # Time remaining
+        license_layout.addWidget(QLabel("Time Remaining:"), 4, 0)
+        self.time_remaining_label = QLabel("Loading...")
+        license_layout.addWidget(self.time_remaining_label, 4, 1)
+        
+        license_box.setLayout(license_layout)
+        layout.addWidget(license_box)
+        
+        # Refresh button
+        refresh_btn = QPushButton("Refresh License Information")
+        refresh_btn.clicked.connect(self.refresh_license_info)
+        layout.addWidget(refresh_btn)
+        
+        # Purchase section
+        purchase_box = QGroupBox("License Management")
+        purchase_box.setStyleSheet("""
+            QGroupBox {
+                background-color: #192742;
+                border: 2px solid #D4AF37;
+                border-radius: 8px;
+            }
+        """)
+        purchase_layout = QVBoxLayout()
+        
+        purchase_info = QLabel(
+            "Your license key is valid for 30 days. When your license expires, "
+            "you will no longer be able to use AUTO_Hekili until you purchase a new license."
+        )
+        purchase_info.setWordWrap(True)
+        purchase_info.setStyleSheet("color: #DDDDDD; margin-bottom: 15px;")
+        purchase_layout.addWidget(purchase_info)
+        
+        # Purchase button
+        self.purchase_btn = QPushButton("Purchase New License")
+        self.purchase_btn.setObjectName("purchaseBtn")
+        self.purchase_btn.setMinimumHeight(40)
+        self.purchase_btn.setStyleSheet("""
+            QPushButton#purchaseBtn {
+                background-color: #1F6032;
+                color: white;
+                font-weight: bold;
+                font-size: 14px;
+                border: 2px solid #D4AF37;
+                border-radius: 5px;
+            }
+            QPushButton#purchaseBtn:hover {
+                background-color: #2A8045;
+            }
+        """)
+        self.purchase_btn.clicked.connect(self.open_purchase_page)
+        purchase_layout.addWidget(self.purchase_btn)
+        
+        purchase_box.setLayout(purchase_layout)
+        layout.addWidget(purchase_box)
+        
+        # Support information
+        support_box = QGroupBox("Support Information")
+        support_box.setStyleSheet("""
+            QGroupBox {
+                background-color: #192742;
+                border: 2px solid #D4AF37;
+                border-radius: 8px;
+            }
+        """)
+        support_layout = QVBoxLayout()
+        
+        support_text = QLabel(
+            "For support questions or issues with your license, please contact us at support@autohekili.com\n\n"
+            "Please include your Hardware ID and License Key in all support communications."
+        )
+        support_text.setWordWrap(True)
+        support_text.setStyleSheet("color: #DDDDDD;")
+        support_layout.addWidget(support_text)
+        
+        support_box.setLayout(support_layout)
+        layout.addWidget(support_box)
+        
+        # Add spacer at the bottom
+        layout.addStretch()
+        
+        # Load license information
+        QTimer.singleShot(500, self.refresh_license_info)
+
+    def refresh_license_info(self):
+        """Refresh license information display in the user tab."""
+        try:
+            # First validate against database to refresh local file
+            validated = self.validate_license_against_database()
+            
+            # Get license data from file (which should now be updated from database)
+            license_data = self.load_license_file()
+            
+            if validated and license_data and "license_key" in license_data:
+                # License is valid and loaded from database
+                self.license_key_label.setText(license_data["license_key"])
+                
+                if "expiration_date" in license_data and license_data["expiration_date"]:
+                    # Parse and display expiration date
+                    expiry_date = datetime.datetime.fromisoformat(license_data["expiration_date"])
+                    self.license_expiry_label.setText(expiry_date.strftime("%Y-%m-%d %H:%M:%S"))
+                    
+                    # Calculate time remaining
+                    now = datetime.datetime.now()
+                    time_remaining = expiry_date - now
+                    
+                    if time_remaining.total_seconds() > 0:
+                        days_remaining = time_remaining.days
+                        self.time_remaining_label.setText(f"{days_remaining} days remaining")
+                        
+                        # Set status
+                        self.license_status_label.setText("Active (Verified)")
+                        self.license_status_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
+                        
+                        # Colorize time remaining based on days left
+                        if days_remaining <= 5:
+                            self.time_remaining_label.setStyleSheet("color: #FFA500; font-weight: bold;")
+                        else:
+                            self.time_remaining_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
+                    else:
+                        self.time_remaining_label.setText("Expired")
+                        self.time_remaining_label.setStyleSheet("color: #FF5555; font-weight: bold;")
+                        self.license_status_label.setText("Expired")
+                        self.license_status_label.setStyleSheet("color: #FF5555; font-weight: bold;")
+                else:
+                    # No expiration date found
+                    self.license_expiry_label.setText("No expiration date")
+                    self.time_remaining_label.setText("Unknown")
+                    self.license_status_label.setText("Unknown")
+                    self.license_status_label.setStyleSheet("color: #FFA500; font-weight: bold;")
+            else:
+                # Could not validate from database or no license found
+                self.license_key_label.setText("No valid license found")
+                self.license_expiry_label.setText("N/A")
+                self.time_remaining_label.setText("N/A")
+                self.license_status_label.setText("No License")
+                self.license_status_label.setStyleSheet("color: #FF5555; font-weight: bold;")
+                
+        except Exception as e:
+            self.log(f"Error refreshing license info: {e}")
+            
+            # Set error state
+            self.license_key_label.setText("Error loading license")
+            self.license_expiry_label.setText("Error")
+            self.time_remaining_label.setText("Error")
+            self.license_status_label.setText("Error")
+            self.license_status_label.setStyleSheet("color: #FF5555; font-weight: bold;")
+
+    def validate_license_against_database(self):
+        """Check license validity against the database and update the local license file."""
+        try:
+            # Connect to the database
+            conn = mysql.connector.connect(
+                host="127.0.0.1",
+                user="root",
+                password="ascent",
+                port=3306,
+                database="auto_hekili_licenses",
+                connection_timeout=10
+            )
+            cursor = conn.cursor(dictionary=True)  # Return results as dictionaries
+            
+            # Get the hardware ID
+            hardware_id = generate_hardware_id()
+            
+            # Load the local license file to get the license key
+            local_license = self.load_license_file()
+            license_key = local_license.get("license_key") if local_license else None
+            
+            if not license_key:
+                self.log("No license key found in local file.")
+                return False
+                
+            # Check if this license key exists and is valid
+            cursor.execute("""
+                SELECT l.*, a.hardware_id, a.is_legitimate 
+                FROM licenses l
+                LEFT JOIN activations a ON l.license_key = a.license_key
+                WHERE l.license_key = %s
+            """, (license_key,))
+            
+            result = cursor.fetchone()
+            
+            if not result:
+                self.log(f"License key {license_key} not found in database.")
+                return False
+                
+            # Update local license file with latest info from database
+            license_data = {
+                "license_key": result["license_key"],
+                "status": result["status"],
+                "creation_date": result["creation_date"].isoformat() if result["creation_date"] else None,
+                "expiration_date": result["expiration_date"].isoformat() if result["expiration_date"] else None,
+                "hardware_id": hardware_id
+            }
+            
+            # Save updated license data to file
+            os.makedirs(os.path.dirname(LICENSE_FILE), exist_ok=True)
+            with open(LICENSE_FILE, 'w') as f:
+                json.dump(license_data, f, indent=4)
+                
+            self.log(f"License updated from database: {license_key}")
+            return True
+                
+        except mysql.connector.Error as e:
+            self.log(f"Database error: {e}")
+            return False
+        except Exception as e:
+            self.log(f"Error validating license: {e}")
+            return False
+        finally:
+            if 'cursor' in locals() and cursor:
+                cursor.close()
+            if 'conn' in locals() and conn:
+                conn.close()
+        
+    def load_license_file(self):
+        """Load license data from file if it exists."""
+        try:
+            if os.path.exists(LICENSE_FILE):
+                with open(LICENSE_FILE, 'r') as f:
+                    license_data = json.load(f)
+                    self.log(f"License file loaded successfully")
+                    return license_data
+            else:
+                self.log(f"License file not found at: {LICENSE_FILE}")
+            return None
+        except json.JSONDecodeError as e:
+            self.log(f"Error parsing license file: {e}")
+            return None
+        except Exception as e:
+            self.log(f"Error loading license file: {e}")
+            return None
+    
+    def open_purchase_page(self):
+        """Opens the web page for purchasing a license using Sell.app"""
+        sell_app_html = """<!DOCTYPE html>
+    <html>
+    <head>
+        <title>Purchase AUTO_Hekili License</title>
+        <link href="https://cdn.sell.app/embed/style.css" rel="stylesheet" />
+        <style>
+            body {
+                background-color: #121212;
+                color: white;
+                font-family: Arial, sans-serif;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                height: 100vh;
+                margin: 0;
+                padding: 20px;
+                text-align: center;
+            }
+            h1 {
+                background: linear-gradient(to right, #FFD100, #FFB000);
+                -webkit-background-clip: text;
+                background-clip: text;
+                color: transparent;
+                font-size: 2.5em;
+                margin-bottom: 10px;
+            }
+            h2 {
+                color: #8A2BE2;
+                font-size: 1.8em;
+                margin-bottom: 20px;
+            }
+            p {
+                color: #CCCCCC;
+                margin-bottom: 30px;
+                max-width: 600px;
+                line-height: 1.6;
+            }
+            .purchase-container {
+                background-color: #1D1D1D;
+                padding: 30px;
+                border-radius: 10px;
+                margin-top: 20px;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>AUTO Hekili</h1>
+        <h2>Purchase License</h2>
+        <p>
+            Get instant access to AUTO_Hekili with your license purchase for the next 30 days.
+            All sales are final and no refunds will be provided.
+        </p>
+        
+        <div class="purchase-container">
+            <button
+                data-sell-store="56234"
+                data-sell-product="292922"
+                data-sell-darkmode="true"
+                data-sell-theme=""
+                style="background: linear-gradient(to right, #00b4d8, #0077b6); padding: 12px 24px; font-size: 16px; border: none; border-radius: 6px; color: white; font-weight: bold; cursor: pointer;"
+            >
+                Complete Purchase
+            </button>
+        </div>
+    
+        <script src="https://cdn.sell.app/embed/script.js" type="module"></script>
+    </body>
+    </html>"""
+        
+        # Save to temporary file and open in browser
+        fd, path = tempfile.mkstemp(suffix='.html')
+        with os.fdopen(fd, 'w') as f:
+            f.write(sell_app_html)
+        
+        webbrowser.open(f'file://{path}')
 
     def set_wow_theme(self):
         """Set World of Warcraft theme for the application."""
@@ -1140,93 +1630,93 @@ class AutoHekiliGUI(QMainWindow):
         return spells
     
     def populate_keybindings(self):
-           """Populate the keybinding grid with current spell info and WoW styling."""
-           # Clear existing widgets (removing everything except header row)
-           for i in reversed(range(1, self.keybind_layout.rowCount())):
-               for j in range(self.keybind_layout.columnCount()):
-                   widget = self.keybind_layout.itemAtPosition(i, j)
-                   if widget and widget.widget():
-                       widget.widget().deleteLater()
-           
-           self.keybind_inputs = {}
-           
-           # Get existing keybindings if available
-           if "keybindings" in self.config:
-               for spell_name, key in self.config["keybindings"].items():
-                   if spell_name in self.spell_info:
-                       self.spell_info[spell_name]["key"] = key
-           
-           # Create inputs for each spell
-           row = 1  # Start after header row
-           for spell_name in sorted(self.spell_info.keys()):
-               # Create spell name container with icon
-               spell_container = QWidget()
-               
-               # Set alternating row background colors
-               if row % 2 == 0:
-                   spell_container.setStyleSheet("background-color: #192742;")
-               else:
-                   spell_container.setStyleSheet("background-color: #0F1929;")
-               
-               spell_layout = QHBoxLayout(spell_container)
-               spell_layout.setContentsMargins(5, 5, 5, 5)
-               spell_layout.setSpacing(10)
-               
-               # Add spell icon if available
-               icon_path = self.spell_info[spell_name]["icon_path"]
-               if os.path.exists(icon_path):
-                   icon_label = QLabel()
-                   img = Image.open(icon_path)
-                   img = img.resize((24, 24), Image.LANCZOS)
-                   qimg = pil_to_qimage(img)
-                   pixmap = QPixmap.fromImage(qimg)
-                   icon_label.setPixmap(pixmap)
-                   spell_layout.addWidget(icon_label)
-               
-               # Add spell name label
-               name_label = QLabel(spell_name)
-               name_label.setStyleSheet("color: #FFD100; font-weight: bold;")
-               spell_layout.addWidget(name_label)
-               spell_layout.addStretch()
-               
-               self.keybind_layout.addWidget(spell_container, row, 0)
-               
-               # Create input container
-               input_container = QWidget()
-               if row % 2 == 0:
-                   input_container.setStyleSheet("background-color: #192742;")
-               else:
-                   input_container.setStyleSheet("background-color: #0F1929;")
-               
-               input_layout = QHBoxLayout(input_container)
-               input_layout.setContentsMargins(5, 5, 5, 5)
-               
-               # Add input field with WoW styling
-               key_input = QLineEdit()
-               key_input.setText(self.spell_info[spell_name]["key"])
-               key_input.setStyleSheet("""
-                   QLineEdit {
-                       background-color: #19294A;
-                       border: 1px solid #344E7F;
-                       border-radius: 3px;
-                       padding: 5px;
-                       color: #FFD100;
-                       font-weight: bold;
-                       selection-background-color: #4A6EA5;
-                       max-width: 150px;
-                   }
-               """)
-               key_input.setAlignment(Qt.AlignCenter)
-               input_layout.addWidget(key_input, alignment=Qt.AlignCenter)
-               
-               self.keybind_inputs[spell_name] = key_input
-               self.keybind_layout.addWidget(input_container, row, 1)
-               
-               row += 1
-           
-           # Set column stretches
-           self.keybind_layout.setColumnStretch(0, 3)  # Spell name gets more space
-           self.keybind_layout.setColumnStretch(1, 1)  # Key binding gets less space
+        """Populate the keybinding grid with current spell info and WoW styling."""
+        # Clear existing widgets (removing everything except header row)
+        for i in reversed(range(1, self.keybind_layout.rowCount())):
+            for j in range(self.keybind_layout.columnCount()):
+                widget = self.keybind_layout.itemAtPosition(i, j)
+                if widget and widget.widget():
+                    widget.widget().deleteLater()
+        
+        self.keybind_inputs = {}
+        
+        # Get existing keybindings if available
+        if "keybindings" in self.config:
+            for spell_name, key in self.config["keybindings"].items():
+                if spell_name in self.spell_info:
+                    self.spell_info[spell_name]["key"] = key
+        
+        # Create inputs for each spell
+        row = 1  # Start after header row
+        for spell_name in sorted(self.spell_info.keys()):
+            # Create spell name container with icon
+            spell_container = QWidget()
+            
+            # Set alternating row background colors
+            if row % 2 == 0:
+                spell_container.setStyleSheet("background-color: #192742;")
+            else:
+                spell_container.setStyleSheet("background-color: #0F1929;")
+            
+            spell_layout = QHBoxLayout(spell_container)
+            spell_layout.setContentsMargins(5, 5, 5, 5)
+            spell_layout.setSpacing(10)
+            
+            # Add spell icon if available
+            icon_path = self.spell_info[spell_name]["icon_path"]
+            if os.path.exists(icon_path):
+                icon_label = QLabel()
+                img = Image.open(icon_path)
+                img = img.resize((24, 24), Image.LANCZOS)
+                qimg = pil_to_qimage(img)
+                pixmap = QPixmap.fromImage(qimg)
+                icon_label.setPixmap(pixmap)
+                spell_layout.addWidget(icon_label)
+            
+            # Add spell name label
+            name_label = QLabel(spell_name)
+            name_label.setStyleSheet("color: #FFD100; font-weight: bold;")
+            spell_layout.addWidget(name_label)
+            spell_layout.addStretch()
+            
+            self.keybind_layout.addWidget(spell_container, row, 0)
+            
+            # Create input container
+            input_container = QWidget()
+            if row % 2 == 0:
+                input_container.setStyleSheet("background-color: #192742;")
+            else:
+                input_container.setStyleSheet("background-color: #0F1929;")
+            
+            input_layout = QHBoxLayout(input_container)
+            input_layout.setContentsMargins(5, 5, 5, 5)
+            
+            # Add input field with WoW styling
+            key_input = QLineEdit()
+            key_input.setText(self.spell_info[spell_name]["key"])
+            key_input.setStyleSheet("""
+                QLineEdit {
+                    background-color: #19294A;
+                    border: 1px solid #344E7F;
+                    border-radius: 3px;
+                    padding: 5px;
+                    color: #FFD100;
+                    font-weight: bold;
+                    selection-background-color: #4A6EA5;
+                    max-width: 150px;
+                }
+            """)
+            key_input.setAlignment(Qt.AlignCenter)
+            input_layout.addWidget(key_input, alignment=Qt.AlignCenter)
+            
+            self.keybind_inputs[spell_name] = key_input
+            self.keybind_layout.addWidget(input_container, row, 1)
+            
+            row += 1
+        
+        # Set column stretches
+        self.keybind_layout.setColumnStretch(0, 3)  # Spell name gets more space
+        self.keybind_layout.setColumnStretch(1, 1)  # Key binding gets less space
     
     def save_keybindings(self):
         """Save keybindings to configuration."""
