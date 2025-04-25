@@ -63,8 +63,8 @@ class CaptureThread(QThread):
         # Create debug directory
         os.makedirs(DEBUG_DIR, exist_ok=True)
         
-        # Special handling for problematic spells
-        self.problem_spells = ["storm_elemental", "ascendance"]
+        # Enhanced problem spell handling
+        self.problem_spells = ["storm_elemental", "ascendance", "earth_elemental", "fire_elemental"]
         self.problem_spell_info = {s: info for s, info in spell_info.items() 
                                  if any(p.lower() in s.lower() for p in self.problem_spells)}
         
@@ -77,21 +77,152 @@ class CaptureThread(QThread):
                 img = Image.open(info["icon_path"])
                 img.save(os.path.join(DEBUG_DIR, f"reference_{spell_name}.png"))
         
-        # Prepare spell hashes
+        # Prepare spell hashes with preprocessing
         self.spell_hashes = {}
         for spell_name, info in spell_info.items():
             if os.path.exists(info["icon_path"]):
                 try:
                     img = Image.open(info["icon_path"])
+                    # Generate a standard hash and store it
                     self.spell_hashes[spell_name] = imagehash.phash(img)
+                    
+                    # Pre-process and save reference images for debugging
+                    if any(p.lower() in spell_name.lower() for p in self.problem_spells):
+                        img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+                        processed = self.preprocess_image(img_cv)
+                        cv2.imwrite(os.path.join(DEBUG_DIR, f"processed_{spell_name}.png"), processed)
                 except Exception as e:
                     self.update_signal.emit(f"Error loading image for {spell_name}: {e}")
+
+    def preprocess_image(self, image):
+        """Enhance spell icon recognition with preprocessing."""
+        # Convert to OpenCV format if it's a PIL image
+        if isinstance(image, Image.Image):
+            image_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+        else:
+            image_cv = image.copy()
+        
+        # Resize for consistency
+        image_cv = cv2.resize(image_cv, (64, 64))
+        
+        # Apply Gaussian blur to remove noise
+        image_cv = cv2.GaussianBlur(image_cv, (3, 3), 0)
+        
+        # Convert to grayscale
+        gray = cv2.cvtColor(image_cv, cv2.COLOR_BGR2GRAY)
+        
+        # Apply adaptive histogram equalization for better contrast
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
+        equalized = clahe.apply(gray)
+        
+        return equalized
+
+    def enhanced_capture(self, region):
+        """Improved screen capture with multiple attempts."""
+        best_screenshot = None
+        best_quality = 0
+        
+        # Try multiple captures to get the best quality
+        for attempt in range(3):
+            try:
+                # Capture with ImageGrab
+                screenshot = ImageGrab.grab(bbox=region)
+                
+                # Calculate image sharpness/quality
+                img_array = np.array(screenshot.convert('L'))
+                quality = cv2.Laplacian(img_array, cv2.CV_64F).var()
+                
+                # Keep the best quality screenshot
+                if quality > best_quality:
+                    best_quality = quality
+                    best_screenshot = screenshot
+                    
+                # If quality is good enough, no need for more attempts
+                if quality > 100:
+                    break
+                    
+            except Exception as e:
+                self.update_signal.emit(f"Capture attempt {attempt} failed: {e}")
+                time.sleep(0.05)
+        
+        return best_screenshot if best_screenshot else ImageGrab.grab(bbox=region)
+    
+    def multi_method_recognition(self, screenshot, last_spell):
+        """Use multiple recognition methods for better accuracy."""
+        # First try template matching for problem spells (high priority)
+        problem_spell_matched = False
+        best_match = None
+        max_confidence = 0
+        
+        # Process image for better recognition
+        processed_screenshot = self.preprocess_image(screenshot)
+        screenshot_cv = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+        
+        # First check problem spells with template matching
+        for spell_name, info in self.problem_spell_info.items():
+            if os.path.exists(info["icon_path"]):
+                template = cv2.imread(info["icon_path"])
+                
+                if template is not None:
+                    # Try multiple scales for better matching
+                    for scale in [1.0, 0.95, 0.9, 0.85, 1.05]:
+                        scaled_template = cv2.resize(template, (0, 0), fx=scale, fy=scale)
+                        
+                        # Skip if template is larger than image
+                        if (scaled_template.shape[0] > screenshot_cv.shape[0] or 
+                            scaled_template.shape[1] > screenshot_cv.shape[1]):
+                            continue
+                        
+                        # Try multiple matching methods
+                        for method in [cv2.TM_CCOEFF_NORMED, cv2.TM_CCORR_NORMED]:
+                            try:
+                                result = cv2.matchTemplate(screenshot_cv, scaled_template, method)
+                                _, max_val, _, _ = cv2.minMaxLoc(result)
+                                
+                                # Keep track of best match
+                                if max_val > max_confidence:
+                                    max_confidence = max_val
+                                    best_match = spell_name
+                            except Exception:
+                                continue
+        
+        # If we found a problem spell with good confidence
+        if best_match and max_confidence >= 0.7:
+            return best_match, True
+            
+        # If no good template match for problem spells, try perceptual hash
+        current_hash = imagehash.phash(screenshot)
+        hash_best_match = None
+        min_diff = float('inf')
+        
+        for spell_name, phash in self.spell_hashes.items():
+            diff = phash - current_hash
+            # Use adaptive threshold based on spell type
+            threshold = 12 if any(p.lower() in spell_name.lower() for p in self.problem_spells) else self.threshold
+            
+            if diff < min_diff:
+                min_diff = diff
+                hash_best_match = spell_name
+        
+        # Determine final result with confidence check
+        if hash_best_match and min_diff < self.threshold:
+            # Favor consistent results by giving preference to last detected spell
+            if hash_best_match == last_spell and min_diff < self.threshold + 3:
+                return hash_best_match, True
+            return hash_best_match, min_diff < self.threshold
+        
+        # Fall back to best template match if hash didn't work well
+        if best_match and max_confidence >= 0.6:
+            return best_match, True
+            
+        return None, False
     
     def run(self):
         """Main thread loop for capture and comparison."""
         self.running = True
         capture_count = 0
         last_spell = None
+        consecutive_matches = 0
         
         while not self.stop_requested:
             # Check for F3 key to toggle automation
@@ -103,10 +234,10 @@ class CaptureThread(QThread):
             
             if self.active:
                 try:
-                    # Capture the screen region
+                    # Capture the screen region with enhanced method
                     left, top, width, height = self.box_position
                     region = (left, top, left + width, top + height)
-                    screenshot = ImageGrab.grab(bbox=region)
+                    screenshot = self.enhanced_capture(region)
                     
                     # Update UI with current screenshot (every 10 frames)
                     if capture_count % 10 == 0:
@@ -117,77 +248,37 @@ class CaptureThread(QThread):
                     if capture_count % 200 == 0:
                         screenshot.save(os.path.join(DEBUG_DIR, f"capture_{capture_count}.png"))
                     
-                    # First try template matching for problematic spells
-                    problem_spell_matched = False
-                    for spell_name, info in self.problem_spell_info.items():
-                        # Convert to CV2 format
-                        screenshot_cv = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
-                        template = cv2.imread(info["icon_path"])
-                        
-                        if template is not None:
-                            # Use template matching with multiple scales for better accuracy
-                            max_val_overall = 0
-                            for scale in [1.0, 0.95, 0.9]:
-                                scaled_template = cv2.resize(template, (0, 0), fx=scale, fy=scale)
-                                if scaled_template.shape[0] <= screenshot_cv.shape[0] and scaled_template.shape[1] <= screenshot_cv.shape[1]:
-                                    result = cv2.matchTemplate(screenshot_cv, scaled_template, cv2.TM_CCOEFF_NORMED)
-                                    _, max_val, _, _ = cv2.minMaxLoc(result)
-                                    max_val_overall = max(max_val_overall, max_val)
-                            
-                            # If strong match found (threshold can be adjusted)
-                            if max_val_overall >= 0.7:
-                                # Save this detection
-                                if spell_name != last_spell:
-                                    self.update_signal.emit(f"Template matching found: {spell_name} (confidence: {max_val_overall:.2f})")
-                                    screenshot.save(os.path.join(DEBUG_DIR, f"detected_{spell_name}_{capture_count}.png"))
-                                    last_spell = spell_name
-                                    self.spell_signal.emit(spell_name)
-                                
-                                # Press the key
-                                key = info["key"]
-                                if key:
-                                    self.press_key_combination(key)
-                                    time.sleep(0.1)  # Small delay to prevent key spamming
-                                
-                                problem_spell_matched = True
-                                break
+                    # Use multi-method recognition for better reliability
+                    best_match, is_confident = self.multi_method_recognition(screenshot, last_spell)
                     
-                    # If no problem spell was found, use the regular phash method
-                    if not problem_spell_matched:
-                        # Compare with spell icons
-                        current_hash = imagehash.phash(screenshot)
-                        best_match = None
-                        min_diff = float('inf')
+                    if best_match and is_confident:
+                        # Track consecutive matches of the same spell
+                        if best_match == last_spell:
+                            consecutive_matches += 1
+                        else:
+                            consecutive_matches = 1
+                            self.update_signal.emit(f"Detected: {best_match}")
+                            screenshot.save(os.path.join(DEBUG_DIR, f"detected_{best_match}_{capture_count}.png"))
+                            last_spell = best_match
+                            self.spell_signal.emit(best_match)
                         
-                        for spell_name, phash in self.spell_hashes.items():
-                            diff = phash - current_hash
-                            # Use lower threshold for problem spells
-                            if any(p.lower() in spell_name.lower() for p in self.problem_spells):
-                                if diff < min_diff and diff < 12:  # Lower threshold for problem spells
-                                    min_diff = diff
-                                    best_match = spell_name
-                            elif diff < min_diff:
-                                min_diff = diff
-                                best_match = spell_name
-                        
-                        # If a match is found and it's close enough
-                        is_problem_spell = best_match and any(p.lower() in best_match.lower() for p in self.problem_spells)
-                        threshold = 12 if is_problem_spell else self.threshold
-                        
-                        if best_match and min_diff < threshold:
-                            # Only log when spell changes
-                            if best_match != last_spell:
-                                self.update_signal.emit(f"Hash matching found: {best_match} (diff: {min_diff})")
-                                last_spell = best_match
-                                self.spell_signal.emit(best_match)
-                            
+                        # Press key if we're confident (more consecutive matches = more confidence)
+                        required_matches = 1  # Can be increased for better reliability
+                        if consecutive_matches >= required_matches:
                             key = self.spell_info[best_match]["key"]
                             if key:
                                 self.press_key_combination(key)
-                                time.sleep(0.1)  # Small delay to prevent key spamming
+                                # Adaptive delay based on consecutive matches
+                                time.sleep(min(0.05 + (consecutive_matches * 0.01), 0.15))
+                    else:
+                        # Gradually reduce confidence when no match is found
+                        consecutive_matches = max(0, consecutive_matches - 1)
                     
                     capture_count += 1
-                    time.sleep(0.05)  # Small delay between captures
+                    
+                    # Adaptive sleep time - faster when we have consistent detections
+                    sleep_time = 0.03 if consecutive_matches > 2 else 0.05
+                    time.sleep(sleep_time)
                 
                 except Exception as e:
                     self.update_signal.emit(f"Error in capture and compare: {e}")
@@ -196,7 +287,7 @@ class CaptureThread(QThread):
                 time.sleep(0.1)
         
         self.running = False
-    
+        
     def stop(self):
         """Stop the thread."""
         self.stop_requested = True
@@ -325,7 +416,7 @@ class AutoHekiliGUI(QMainWindow):
         self.current_spell = None
         
         # Set dark theme
-        self.set_dark_theme()
+        self.set_wow_theme()
         
         # Set up the UI
         self.init_ui()
@@ -393,17 +484,37 @@ class AutoHekiliGUI(QMainWindow):
         
         self.setPalette(wow_palette)
         
-        # Apply WoW-style stylesheet
+        # Apply WoW-style stylesheet with aggressive background color enforcement
         self.setStyleSheet("""
-            QMainWindow {
-                background-color: #0F1929; /* Dark blue background */
-            }
-            
-            QWidget {
+            /* Force dark background on ALL widget types */
+            QWidget, QMainWindow, QDialog, QFrame, QLabel, QToolTip, QMenuBar, QMenu, QAction, 
+            QTabWidget, QTabBar, QDockWidget, QToolBar, QStatusBar, QAbstractScrollArea, 
+            QScrollArea, QAbstractItemView, QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, 
+            QFontComboBox, QToolBox, QToolButton, QCheckBox, QRadioButton, QSpinBox, QDoubleSpinBox, 
+            QGroupBox, QSplitter, QSplitterHandle, QPushButton, QCalendarWidget, QListView, 
+            QTreeView, QTableView, QTableWidget, QListWidget, QTreeWidget, QProgressBar,
+            QHeaderView, QMdiArea, QMdiSubWindow, QTableCornerButton, QSizeGrip, QLCDNumber, 
+            QStackedWidget, QToolBar, QKeySequenceEdit, QDateEdit, QDateTimeEdit, QDial, 
+            QCompleter, QSizeGrip, QAbstractButton, QWizard, QWizardPage, QScrollBar, QSlider {
                 background-color: #0F1929;
-                color: #FFD100;
             }
             
+            /* Main window background */
+            QMainWindow, QMainWindow::separator {
+                background-color: #0F1929;
+            }
+            
+            /* All layouts - needs to be applied to children since layouts themselves don't have backgrounds */
+            QVBoxLayout > *, QHBoxLayout > *, QGridLayout > *, QFormLayout > * {
+                background-color: #0F1929;
+            }
+            
+            /* Containers and their children */
+            QScrollArea > QWidget, QScrollArea > QWidget > QWidget, QTabWidget > QWidget {
+                background-color: #0F1929;
+            }
+            
+            /* Group box specific (often problematic) */
             QGroupBox {
                 border: 1px solid #D4AF37; /* Gold border */
                 border-radius: 5px;
@@ -411,6 +522,7 @@ class AutoHekiliGUI(QMainWindow):
                 font-weight: bold;
                 font-size: 14px;
                 padding: 8px;
+                background-color: #0F1929;
             }
             
             QGroupBox::title {
@@ -418,31 +530,15 @@ class AutoHekiliGUI(QMainWindow):
                 subcontrol-position: top center;
                 padding: 0 10px;
                 color: #FFD100; /* Gold text */
-                background-color: #0F1929; /* Match the dark background */
+                background-color: #0F1929;
             }
             
-            QPushButton {
-                background-color: #344E7F; /* WoW blue button */
-                border: 1px solid #D4AF37; /* Gold border */
-                border-radius: 3px;
-                padding: 8px;
-                font-weight: bold;
-                min-height: 24px;
-                color: white;
-            }
-            
-            QPushButton:hover {
-                background-color: #4A6EA5; /* Lighter blue when hovering */
-            }
-            
-            QPushButton:pressed {
-                background-color: #263A5E; /* Darker blue when pressed */
-            }
-            
+            /* Tab specific styling */
             QTabWidget::pane {
                 border: 1px solid #D4AF37; /* Gold border */
                 border-radius: 3px;
                 top: -1px;
+                background-color: #0F1929;
             }
             
             QTabBar::tab {
@@ -467,6 +563,26 @@ class AutoHekiliGUI(QMainWindow):
                 margin-top: 2px;
             }
             
+            /* Buttons */
+            QPushButton {
+                background-color: #344E7F; /* WoW blue button */
+                border: 1px solid #D4AF37; /* Gold border */
+                border-radius: 3px;
+                padding: 8px;
+                font-weight: bold;
+                min-height: 24px;
+                color: white;
+            }
+            
+            QPushButton:hover {
+                background-color: #4A6EA5; /* Lighter blue when hovering */
+            }
+            
+            QPushButton:pressed {
+                background-color: #263A5E; /* Darker blue when pressed */
+            }
+            
+            /* Input fields */
             QLineEdit, QComboBox {
                 background-color: #19294A; /* Darker blue for input fields */
                 border: 1px solid #344E7F; /* Blue border */
@@ -487,15 +603,19 @@ class AutoHekiliGUI(QMainWindow):
                 selection-background-color: #4A6EA5;
             }
             
+            /* Labels - make background transparent to adapt to parent */
             QLabel {
                 color: #FFD100; /* Gold text */
                 font-weight: bold;
                 padding: 2px;
+                background-color: transparent;
             }
             
+            /* Scroll bars */
             QScrollArea {
                 border: 1px solid #344E7F;
                 border-radius: 3px;
+                background-color: #0F1929;
             }
             
             QScrollBar:vertical {
@@ -533,6 +653,7 @@ class AutoHekiliGUI(QMainWindow):
                 background: #FFD100; /* Gold arrows */
             }
             
+            /* Slider */
             QSlider::groove:horizontal {
                 border: 1px solid #344E7F;
                 background: #19294A;
@@ -548,6 +669,7 @@ class AutoHekiliGUI(QMainWindow):
                 border-radius: 5px;
             }
             
+            /* Status bar */
             QStatusBar {
                 background-color: #19294A;
                 color: #FFD100;
@@ -555,6 +677,12 @@ class AutoHekiliGUI(QMainWindow):
                 border-top: 1px solid #D4AF37;
             }
         """)
+        
+        # Force update for all widgets
+        for widget in self.findChildren(QWidget):
+            widget.setAutoFillBackground(True)
+            widget.setBackgroundRole(QPalette.Window)
+            widget.update()
     
     def init_setup_tab(self):
         """Initialize the setup tab with WoW-style interface."""
@@ -1075,7 +1203,7 @@ class AutoHekiliGUI(QMainWindow):
             }
         """)
         self.refresh_capture_btn.clicked.connect(self.refresh_capture)
-        preview_layout.addWidget(self.refresh_capture_btn)
+        preview_layout.addWidget(self.refresh_capture_btn) [[4]](https://poe.com/citation?message_id=381399385216&citation=4)
         
         capture_layout.addWidget(preview_container, alignment=Qt.AlignCenter)
         capture_box.setLayout(capture_layout)
@@ -1088,7 +1216,7 @@ class AutoHekiliGUI(QMainWindow):
         
         # Bottom part - debug log with WoW styling
         log_widget = QWidget()
-        log_widget.setStyleSheet("background-color: #0F1929;")
+        log_widget.setStyleSheet("background-color: #0F1929;") [[4]](https://poe.com/citation?message_id=381399385216&citation=4)
         log_layout = QVBoxLayout(log_widget)
         log_layout.setContentsMargins(0, 0, 0, 0)
         
@@ -1136,7 +1264,7 @@ class AutoHekiliGUI(QMainWindow):
         splitter.addWidget(log_widget)
         
         # Set initial sizes
-        splitter.setSizes([350, 350])
+        splitter.setSizes([350, 350]) [[2]](https://poe.com/citation?message_id=381399385216&citation=2)
         
         layout.addWidget(splitter)
     
